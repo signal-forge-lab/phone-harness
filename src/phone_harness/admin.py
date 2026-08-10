@@ -1,15 +1,100 @@
 """Diagnostics: `phone-harness --doctor` walks the permission/session ladder."""
 import os, subprocess, sys, tempfile
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 
 def _check(label, ok, hint=""):
     mark = "PASS" if ok else "FAIL"
-    print(f"  [{mark}] {label}" + (f" — {hint}" if not ok and hint else ""))
+    print(f"  [{mark}] {label}" + (f" - {hint}" if not ok and hint else ""))
     return ok
 
 
+def _windows_doctor():
+    print("phone-harness doctor (Windows)\n")
+    ok = True
+
+    for package in ("pymobiledevice3", "paddlepaddle", "paddleocr"):
+        try:
+            installed = version(package)
+        except PackageNotFoundError:
+            _check(package, False, f"install {package} in the phone-harness Python environment")
+            ok = False
+        else:
+            ok &= _check(f"{package} {installed}", True)
+    if not ok:
+        return 1
+
+    from . import windows
+
+    try:
+        devices = windows.device_udids()
+    except RuntimeError as exc:
+        _check(
+            "Apple Mobile Device/usbmux transport",
+            False,
+            f"install/repair Apple Devices or Microsoft Store iTunes ({exc})",
+        )
+        return 1
+
+    ok &= _check("Apple Mobile Device/usbmux transport", True)
+    if not devices:
+        _check(
+            "iPhone connected",
+            False,
+            "connect and unlock an iPhone over USB, then approve Trust if prompted",
+        )
+        return 1
+    if len(devices) != 1:
+        _check(
+            "exactly one iPhone connected",
+            False,
+            f"found {len(devices)} devices; disconnect all but the intended phone",
+        )
+        return 1
+    ok &= _check(f"iPhone connected ({len(devices)})", True)
+
+    try:
+        win = windows.ensure_window()
+    except RuntimeError as exc:
+        _check(
+            "CoreDevice developer services / display info",
+            False,
+            f"enable Developer Mode and mount the DeveloperDiskImage if required ({exc})",
+        )
+        return 1
+    ok &= _check(f"display info ({win['w']}x{win['h']})", True)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        path = f.name
+    try:
+        try:
+            path, capture_win = windows.capture(path)
+            size = os.path.getsize(path)
+        except RuntimeError as exc:
+            _check("CoreDevice screenshot", False, str(exc))
+            return 1
+        ok &= _check(f"CoreDevice screenshot ({size} bytes)", size > 1000)
+
+        try:
+            from . import paddle_ocr
+
+            count = len(paddle_ocr.recognize(path, capture_win))
+        except Exception as exc:
+            _check("PaddleOCR / PP-OCRv6 medium", False, str(exc))
+            return 1
+        ok &= _check(f"PaddleOCR works ({count} text boxes)", True)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+    print("\nall clear" if ok else "\nfix the FAILs above, then re-run")
+    return 0 if ok else 1
+
+
 def run_doctor():
+    if sys.platform == "win32":
+        return _windows_doctor()
+
     print("phone-harness doctor\n")
     ok = True
 

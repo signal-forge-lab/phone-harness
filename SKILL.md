@@ -1,13 +1,14 @@
 ---
 name: phone-harness
-description: "Control the user's iPhone through the Mac's iPhone Mirroring window: open apps, tap, type, swipe, read the screen."
+description: "Control the user's real iPhone from macOS or Windows: read the screen with local OCR, open apps, tap, type, swipe, and verify results."
 ---
 
 # phone-harness
 
-Direct iPhone control via the iPhone Mirroring app — screenshots + Vision OCR
-for eyes, HID-level CGEvents for hands. For task-specific edits, use
-`agent-workspace/agent_helpers.py`. For setup or permission problems, read
+Direct iPhone control with a screenshot/OCR/action/verification loop. macOS uses
+iPhone Mirroring + Vision OCR + CGEvents. Windows uses `pymobiledevice3`
+CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
+`agent-workspace/agent_helpers.py`. For setup or transport problems, read
 `install.md`.
 
 ## When Not to Use
@@ -26,25 +27,31 @@ PY
 ```
 
 - Invoke as `phone-harness`. Use heredocs for multi-line commands.
-- Helpers are pre-imported. All coordinates are global screen points.
-- `ensure_mirroring()` launches and focuses the window; input helpers focus it
-  automatically before posting events.
+- Helpers are pre-imported. macOS coordinates are global screen points;
+  Windows coordinates are screenshot pixels. Prefer OCR-derived coordinates so
+  this distinction stays internal.
+- On macOS, input helpers focus iPhone Mirroring automatically. On Windows,
+  input goes directly through CoreDevice.
 
 ## Screen Workflow
 
 - Prefer `ocr()` over eyeballing screenshots: every visible string comes back
-  with a tap-ready center point — `[{text, confidence, x, y, w, h}]`. Filter
-  in Python before printing.
+  with a tap-ready center point — `[{text, confidence, x, y, w, h, ...}]`.
+  Filter in Python before printing.
 - Tap by label: `tap_text("Weather")`. On failure it raises with what IS
-  visible, so read the exception before retrying.
+  visible. Multiple matches are rejected unless you deliberately pass an
+  explicit `index`; refine the query instead of guessing.
 - Icons without labels: `screenshot()`, view the image, compute the point
   (image px ÷ scale + window origin — `screen_info()` has both sizes), then
   `tap(x, y)`.
 - **Verify after every action**: `wait_stable()` then `ocr()`/`screenshot()`.
   There is no DOM to assert against; the capture is the ground truth.
-- Navigation: `home()`, `app_switcher()`, `open_app("Notes")` (Spotlight),
-  `swipe("up")`, `scroll()`, `type_text("...")`, `press("return")`,
-  `long_press(x, y)`.
+- Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
+  `type_text("...")`, `long_press(x, y)`. `press("return")` and other raw key
+  combos are macOS-only in the MVP.
+- Windows MVP: `type_text()` supports printable ASCII; `app_switcher()` and
+  arbitrary key combos are not supported. `open_app()` resolves an installed
+  app name to its bundle identifier and launches it through developer services.
 - **Scrolling a list**: use `scroll_collect(extract, key=...)` to walk a list
   to its true end, de-duping as it goes — it returns `{items, stop, scrolls}`
   where `stop` is `'reached-end'` or `'max-scrolls'`. Use `scroll_until(done)`
@@ -53,10 +60,20 @@ PY
   new rows — a dense screen or a missed OCR line will not end the scroll
   early. Each step settles first so lazy-loaded content arrives before the
   movement check. `scroll_screen()` is the single-step primitive if you need
-  it. These use wheel scrolling (a slow touch-drag barely moves an iOS list
-  and bounces back).
-- Raw Quartz is the escape hatch: `import Quartz` in your script for anything
-  the helpers don't cover.
+  it. macOS uses wheel scrolling; the Windows backend maps the same helper to
+  a CoreDevice touch drag and must be judged by real-device behavior.
+- Raw Quartz is a macOS-only escape hatch. Do not reach around the Windows
+  backend with ad-hoc destructive `pymobiledevice3` commands.
+
+## OCR-first, vision only as fallback
+
+Do not send every screenshot to a vision model. Normal flow is:
+
+`screenshot → local OCR → target coordinate → action → local verification`.
+
+Use a vision-capable model only when OCR cannot identify an icon, the screen is
+visually ambiguous, or OCR and the visible state disagree. Crop to the relevant
+region when practical.
 
 ## Consent
 
@@ -67,15 +84,17 @@ linger in personal content (Messages, Photos, Mail) beyond what the task needs.
 
 ## Connection is the user's job
 
-The harness never connects the phone for you. Connecting or resuming mirroring
-is a physical action — opening the app, approving the prompt, and (crucially)
-**locking the iPhone when it says "iPhone in Use"** — that only the user can do.
+The harness never bypasses physical trust/lock/developer prompts. On Windows,
+USB connection, unlock, Trust approval and Developer Mode confirmation can
+require the user. On macOS, connecting/resuming iPhone Mirroring can require
+opening the app and locking the physical phone.
 
-`ensure_mirroring()` gates every task on this: if the phone isn't connected it
-raises a clear message (call `connection_state()` yourself to check —
-`ready` / `blocked` / `no-window` / `not-running`). When you hit that:
+`connection_state()` reports the host-specific state. Windows uses
+`ready` / `no-device` / `ambiguous-device` / `transport-unavailable`; macOS keeps
+`ready` / `blocked` / `no-window` / `not-running`. When a physical action is
+required:
 
-- **STOP and relay the message. Ask the user to connect the phone themselves.**
+- **STOP and relay the exact physical action. Ask the user to do it themselves.**
 - **Never** tap `Connect` / `Continue`, and **never** loop-poll waiting for the
   connection. Tapping Connect while the phone is unlocked does nothing, and
   polling just burns time — the only fix is the user locking/connecting the

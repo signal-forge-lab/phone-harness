@@ -1,13 +1,13 @@
 [project]
 name = "phone-harness"
 version = "0.1.0"
-description = "Control a real iPhone through macOS iPhone Mirroring: OCR eyes, CGEvent hands"
+description = "Control a real iPhone from macOS or Windows with OCR eyes and native device input"
 requires-python = ">=3.10"
 dependencies = [
-    "pyobjc-framework-Quartz",
-    "pyobjc-framework-Vision",
-    "pyobjc-framework-AppKit",
-    "pyobjc-framework-ApplicationServices",
+    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
+    "pyobjc-framework-Vision; sys_platform == 'darwin'",
+    "pyobjc-framework-AppKit; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

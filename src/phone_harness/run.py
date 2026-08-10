@@ -23,7 +23,9 @@ def main():
         sys.exit(run_doctor())
     if args and args[0] == "skill":
         repo_root = Path(__file__).resolve().parent.parent.parent
-        print((repo_root / "SKILL.md").read_text(encoding="utf-8"), end="")
+        # Write bytes so Windows consoles configured for cp932 cannot corrupt
+        # or reject the UTF-8 skill text when it is redirected to SKILL.md.
+        sys.stdout.buffer.write((repo_root / "SKILL.md").read_bytes())
         return
     if args or sys.stdin.isatty():
         sys.exit(USAGE)

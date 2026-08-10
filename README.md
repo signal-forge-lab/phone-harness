@@ -1,12 +1,19 @@
 # Phone Harness 📱
 
 Connect an LLM directly to your real iPhone with a thin, editable harness.
-No jailbreak, no Xcode, no WebDriverAgent.
+No jailbreak and no WebDriverAgent.
 
-The Mac's iPhone Mirroring window is the whole transport: `screencapture` +
-Vision-framework OCR for eyes, HID-level CGEvents for hands. Nothing between the
-agent and the phone. The agent writes what's missing during execution in
-`agent-workspace/agent_helpers.py`.
+The harness now has two host transports:
+
+- **macOS** — iPhone Mirroring + Apple Vision OCR + CGEvents.
+- **Windows** — `pymobiledevice3` CoreDevice + local PaddleOCR PP-OCRv6 +
+  Universal HID.
+
+On macOS the iPhone Mirroring window is the transport. On Windows the harness
+talks to the real phone over Apple's USB/CoreDevice services through
+`pymobiledevice3`. In both cases the agent works from screenshots, local OCR and
+tap-ready coordinates; screenshots only need a vision model when OCR cannot
+describe an icon or ambiguous visual state.
 
 ```
   ● agent: wants to open Weather
@@ -19,7 +26,28 @@ agent and the phone. The agent writes what's missing during execution in
 
 **Your phone, driven by an agent.**
 
-## Setup prompt
+## Setup
+
+### Windows
+
+Use Python 3.12 and install the Windows prerequisites described in
+[`install.md`](install.md). The minimal verified environment is:
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -U pip setuptools wheel
+.venv\Scripts\python.exe -m pip install pymobiledevice3
+.venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+.venv\Scripts\python.exe -m pip install paddleocr==3.7.0
+.venv\Scripts\python.exe -m pip install -e . --no-deps
+.venv\Scripts\phone-harness.exe --doctor
+```
+
+The Windows backend deliberately keeps `pymobiledevice3` as an external
+dependency instead of copying or vendoring its GPL-3.0-or-later source into
+this MIT repository.
+
+### macOS
 
 Paste into Claude Code or Codex:
 
@@ -61,19 +89,22 @@ capture silently do nothing, watch for a macOS permission prompt. See
 
 ## Why this works
 
-iPhone Mirroring (macOS Sequoia+) renders the phone as a Mac window and forwards
-real mouse and keyboard input as touches. That gives an agent everything it
-needs:
+On **macOS**, iPhone Mirroring (Sequoia+) renders the phone as a Mac window and
+forwards real mouse and keyboard input as touches.
 
-- **See** — capture just the mirroring window, OCR it with Apple's Vision
-  framework: every visible string with a tap-ready coordinate. The poor man's
-  DOM.
-- **Act** — CGEvents posted at the HID tap: taps, long-presses, drags/flicks,
-  scroll gestures, unicode typing, and the app's own shortcuts (Cmd+1 Home,
-  Cmd+2 App Switcher, Cmd+3 Spotlight).
+On **Windows**, current `pymobiledevice3` exposes CoreDevice screen capture,
+display information, Universal HID tap/drag, named HID buttons and a printable
+ASCII virtual keyboard. The harness converts screenshot pixels to CoreDevice's
+0..65535 HID coordinate space at the input boundary.
+
+That gives an agent the same three primitives on either host:
+
+- **See** — capture the phone and OCR locally. macOS uses Apple Vision; Windows
+  uses PaddleOCR PP-OCRv6 medium. Every visible string has a tap-ready center.
+- **Act** — macOS uses CGEvents; Windows uses CoreDevice Universal HID.
 - **Verify** — screenshot again. No DOM means the capture is the ground truth.
 
-Things that do NOT work, learned the hard way: AppleScript `click at` (silently
+macOS-specific things that do NOT work, learned the hard way: AppleScript `click at` (silently
 ignored — the window is a video stream with no accessibility tree), unicode key
 payloads (mirroring forwards raw HID keycodes, so typing must use keycodes), a
 slow touch-drag (barely moves an iOS list — use wheel scroll for lists, a fast
@@ -98,9 +129,11 @@ reaches for it on its own.
 
 - `SKILL.md` — day-to-day usage (the agent-facing product surface)
 - `install.md` — permissions bootstrap and troubleshooting
-- `src/phone_harness/` — protected core (~500 lines):
+- `src/phone_harness/` — protected core:
   - `mirror.py` — window discovery, focus, capture, CGEvent input
   - `ocr.py` — Vision-framework text recognition → screen-point boxes
+  - `windows.py` — Windows CoreDevice screenshot/input transport
+  - `paddle_ocr.py` — PP-OCRv6 local OCR → screenshot-pixel boxes
   - `helpers.py` — the primitives pre-imported into scripts
   - `admin.py` — `--doctor`
   - `run.py` — the CLI (`exec` stdin with helpers in scope)
@@ -122,7 +155,12 @@ PY
 
 ## Limits
 
-- One phone, one session; unlocking the physical phone pauses mirroring.
+- One phone, one active session.
+- Windows MVP targets iOS 17.4+ over USB; earlier iOS 17 releases can require a
+  privileged `tunneld` path.
+- Windows direct typing currently supports printable ASCII only.
+- `app_switcher()` is not part of the Windows MVP; `home()` and `open_app()` are.
+- On macOS, unlocking the physical phone pauses mirroring.
 - No multi-touch (no pinch), no camera/Face ID flows, DRM video renders black.
 - OCR sees text, not semantics — unlabeled icons need a screenshot + a
   vision-capable model.

@@ -2,16 +2,26 @@
 
 Core helpers live here. Agent-editable helpers live in
 PH_AGENT_WORKSPACE/agent_helpers.py (defaults to <repo>/agent-workspace).
-Raw Quartz is always available: `import Quartz` in your script for anything
-these helpers don't cover.
+On macOS, raw Quartz remains available as an escape hatch. Windows uses the
+CoreDevice backend and should stay within its explicit helpers.
 """
-import hashlib, importlib.util, os, time
+import hashlib, importlib.util, os, sys, time
 from pathlib import Path
 
-from . import mirror, ocr as _ocr
-from .mirror import (  # re-exported input primitives
-    tap, long_press, drag, press, type_text, activate, find_window,
-)
+_WINDOWS = sys.platform == "win32"
+if _WINDOWS:
+    from . import paddle_ocr as _ocr
+    from . import windows as mirror
+else:
+    from . import mirror, ocr as _ocr
+
+tap = mirror.tap
+long_press = mirror.long_press
+drag = mirror.drag
+press = mirror.press
+type_text = mirror.type_text
+activate = mirror.activate
+find_window = mirror.find_window
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
@@ -33,6 +43,8 @@ def connection_state():
 
     'blocked' means a connect / 'iPhone in Use' / paused interstitial is on
     screen. Cheap to call; use it to decide whether to proceed."""
+    if _WINDOWS:
+        return mirror.connection_state()
     if mirror.running_app() is None:
         return "not-running"
     if mirror.find_window() is None:
@@ -51,6 +63,20 @@ def ensure_mirroring():
     message; do not try to tap through the connect screen yourself.
     """
     state = connection_state()
+    if _WINDOWS:
+        if state == "ready":
+            return mirror.ensure_window()
+        if state == "no-device":
+            raise RuntimeError(
+                "No iPhone is visible through Apple Mobile Device/usbmux. "
+                "Connect and unlock the phone, approve Trust if prompted, then retry.")
+        if state == "ambiguous-device":
+            raise RuntimeError(
+                "More than one iPhone is visible through usbmux. Disconnect all but the "
+                "single phone intended for this session before retrying.")
+        raise RuntimeError(
+            "Apple Mobile Device/usbmux is unavailable on Windows. Repair the "
+            "Apple device layer before retrying.")
     if state == "ready":
         mirror.activate()
         return mirror.find_window()
@@ -84,6 +110,11 @@ def screenshot(path=None):
     return p
 
 
+def screen(path=None):
+    """Alias for screenshot(); retained as the concise agent-facing API."""
+    return screenshot(path)
+
+
 # --- reading the screen ---
 
 def ocr(min_confidence=0.3):
@@ -102,13 +133,19 @@ def find_text(query, exact=False):
             if (o["text"].lower() == q if exact else q in o["text"].lower())]
 
 
-def tap_text(query, index=0, exact=False):
+def tap_text(query, index=None, exact=False):
     """Find text on screen and tap its center. Raises with what IS visible on
     failure, so the next step is informed."""
     hits = find_text(query, exact=exact)
     if not hits:
         visible = [o["text"] for o in ocr()][:30]
         raise RuntimeError(f"no visible text matches {query!r}; saw: {visible}")
+    if index is None and len(hits) != 1:
+        raise RuntimeError(
+            f"visible text {query!r} is ambiguous ({len(hits)} matches); "
+            "refine the query or pass an explicit index")
+    if index is None:
+        index = 0
     hit = hits[index]
     tap(hit["x"], hit["y"])
     return hit
@@ -187,9 +224,9 @@ def scroll_screen(direction="up", amount=0.6, settle=2.5, moved_thresh=0.6):
     if sign is None:
         raise ValueError(f"direction must be 'up' or 'down', got {direction!r}")
     before = _text_set(_content_texts())
-    # Wheel scroll, not drag: a slow touch-drag barely moves an iOS list and
-    # bounces back, while wheel events advance it deterministically (proven on
-    # long lists). amount is a fraction of window height.
+    # macOS uses wheel scrolling here. The Windows backend maps this helper to
+    # a CoreDevice touch drag because there is no mirroring-window wheel event.
+    # amount is a fraction of the visible screen height.
     mirror.scroll_wheel(sign * int(w["h"] * amount),
                         w["x"] + w["w"] / 2, w["y"] + w["h"] / 2, steps=10)
     time.sleep(0.4)
@@ -293,12 +330,18 @@ def home():
 
 
 def app_switcher():
+    if _WINDOWS:
+        raise RuntimeError("app_switcher() is not supported by the Windows CoreDevice MVP")
     press("cmd+2")
     time.sleep(0.8)
 
 
 def open_app(name):
     """Open an app via Spotlight (Cmd+3): type name, return, wait for launch."""
+    if _WINDOWS:
+        mirror.open_app(name)
+        wait_stable()
+        return
     press("cmd+3")
     time.sleep(0.9)
     type_text(name)
@@ -320,7 +363,8 @@ def wait_stable(timeout=6.0, interval=0.5, settle=2):
     deadline = time.time() + timeout
     while time.time() < deadline:
         path, _ = mirror.capture()
-        digest = hashlib.md5(Path(path).read_bytes()).hexdigest()
+        digest = (mirror.image_signature(path) if _WINDOWS
+                  else hashlib.md5(Path(path).read_bytes()).hexdigest())
         same = same + 1 if digest == prev else 0
         if same >= settle - 1:
             return True

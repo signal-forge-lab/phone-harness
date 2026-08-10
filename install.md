@@ -4,6 +4,58 @@ Use once. For phone work, read `SKILL.md`.
 
 ## Requirements
 
+### Windows
+
+- Windows 11.
+- Python 3.12 is the verified project interpreter.
+- Apple device support. Install **Apple Devices** and, when needed for the
+  usbmux/driver layer, the Microsoft Store version of **iTunes**.
+- `pymobiledevice3` for USB/CoreDevice and HID transport.
+- PaddlePaddle CPU + PaddleOCR 3.7 for local PP-OCRv6 OCR.
+
+Verified Python environment:
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -U pip setuptools wheel
+.venv\Scripts\python.exe -m pip install pymobiledevice3
+.venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+.venv\Scripts\python.exe -m pip install paddleocr==3.7.0
+.venv\Scripts\python.exe -m pip install -e . --no-deps
+.venv\Scripts\python.exe -m pip check
+.venv\Scripts\phone-harness.exe --doctor
+```
+
+`--no-deps` is intentional on Windows: this repository does not vendor or
+silently bundle `pymobiledevice3` (GPL-3.0-or-later). Install that external
+dependency explicitly as shown above.
+
+First transport check:
+
+```bat
+.venv\Scripts\pymobiledevice3.exe usbmux list
+```
+
+If it reports that the usbmuxd socket is unavailable, repair the Apple device
+layer first. Do **not** rebuild Python/PaddleOCR for an Apple USB-driver error.
+
+Once the iPhone is visible, unlock it and approve Trust if prompted. Developer
+services can also require Developer Mode and a DeveloperDiskImage:
+
+```bat
+.venv\Scripts\pymobiledevice3.exe amfi enable-developer-mode
+.venv\Scripts\pymobiledevice3.exe mounter auto-mount
+```
+
+The device can require a physical confirmation/restart when Developer Mode is
+enabled. The agent must stop for that physical step rather than attempting to
+bypass it.
+
+The Windows doctor verifies the dependency stack, usbmux, a connected phone,
+CoreDevice display info, screenshot capture and PP-OCRv6 OCR in that order.
+
+### macOS
+
 - macOS Sequoia+ with iPhone Mirroring paired to the phone (open the app once
   manually to pair — pairing prompts need the physical phone).
 - Python 3.12+ with pyobjc (`pip install pyobjc-framework-Quartz
@@ -31,7 +83,7 @@ open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapt
 > exactly which extra permissions a clean install needs, they'll get added to
 > `--doctor` as proper prerequisites.
 
-## Fast Path
+## macOS Fast Path
 
 ```bash
 git clone https://github.com/ShawnPana/phone-harness ~/.phone-harness   # canonical home
