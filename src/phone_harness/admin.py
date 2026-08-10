@@ -14,7 +14,7 @@ def _windows_doctor():
     print("phone-harness doctor (Windows)\n")
     ok = True
 
-    for package in ("pymobiledevice3", "paddlepaddle", "paddleocr"):
+    for package in ("pymobiledevice3", "paddlepaddle", "paddleocr", "Pillow"):
         try:
             installed = version(package)
         except PackageNotFoundError:

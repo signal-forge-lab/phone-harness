@@ -23,6 +23,12 @@ _SCREEN_SIZE = None
 _DEVICE_UDID = None
 
 
+def _clear_device_cache():
+    global _DEVICE_UDID, _SCREEN_SIZE
+    _DEVICE_UDID = None
+    _SCREEN_SIZE = None
+
+
 def _run_pm3(*args, timeout=90):
     started = time.perf_counter()
     operation = "/".join(map(str, args[:4]))
@@ -30,17 +36,23 @@ def _run_pm3(*args, timeout=90):
     env = os.environ.copy()
     if _DEVICE_UDID:
         env["PYMOBILEDEVICE3_UDID"] = _DEVICE_UDID
-    result = subprocess.run(
-        cmd,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _clear_device_cache()
+        LOG.debug("operation=%s duration=%.3f result=timeout", operation, time.perf_counter() - started)
+        raise RuntimeError(f"pymobiledevice3 timed out after {timeout}s: {operation}") from exc
     stdout, stderr = result.stdout.strip(), result.stderr.strip()
     if result.returncode != 0 or (not stdout and " ERROR " in stderr):
+        _clear_device_cache()
         LOG.debug("operation=%s duration=%.3f result=fail", operation, time.perf_counter() - started)
         detail = stderr or stdout or f"exit {result.returncode}"
         raise RuntimeError(f"pymobiledevice3 failed: {detail}")
@@ -57,8 +69,8 @@ def _json_pm3(*args, timeout=90):
 
 
 def device_udids():
-    """Return UDIDs known to usbmuxd without opening lockdownd sessions."""
-    return _json_pm3("usbmux", "list", "--simple")
+    """Return USB-connected UDIDs without opening lockdownd sessions."""
+    return _json_pm3("usbmux", "list", "--usb", "--simple")
 
 
 def _select_device(devices):
@@ -128,14 +140,23 @@ def capture(path=None, retries=0):
     """Capture the real iPhone screen as PNG and return (path, pixel bounds)."""
     global _SCREEN_SIZE
     del retries  # retained for mirror.capture call compatibility
+    _SCREEN_SIZE = None
     _require_device()
     path = Path(path or TMP / "screen.png")
     path.parent.mkdir(parents=True, exist_ok=True)
-    _run_pm3("developer", "core-device", "screen-capture", "screenshot", path)
-    if not path.exists() or path.stat().st_size == 0:
-        raise RuntimeError("CoreDevice screenshot command completed without a PNG")
-    with Image.open(path) as image:
-        width, height = image.size
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".png", dir=path.parent)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    temp_path.unlink(missing_ok=True)
+    try:
+        _run_pm3("developer", "core-device", "screen-capture", "screenshot", temp_path)
+        if not temp_path.exists() or temp_path.stat().st_size == 0:
+            raise RuntimeError("CoreDevice screenshot command completed without a PNG")
+        with Image.open(temp_path) as image:
+            width, height = image.size
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     _SCREEN_SIZE = (width, height)
     return str(path), {"x": 0, "y": 0, "w": width, "h": height}
 
@@ -174,6 +195,8 @@ def long_press(x, y, duration=0.8):
 
 def scroll_wheel(dy, x, y, steps=10):
     """Mirror-compatible scroll implemented as a real touch drag on Windows."""
+    if not dy:
+        return
     win = ensure_window()
     target_y = min(max(y + dy, 0), win["h"])
     drag(x, y, x, target_y, duration=0.35, steps=steps)
@@ -185,6 +208,8 @@ def _is_printable_ascii(text):
 
 def type_text(text, delay=0.03):
     del delay  # CoreDevice CLI owns key timing
+    if not text:
+        return
     if not _is_printable_ascii(text):
         raise ValueError("Windows CoreDevice typing currently supports printable ASCII only")
     _require_device()
@@ -204,18 +229,10 @@ def _resolve_app_bundle(name, apps):
     query = name.casefold()
     matches = []
     for app in apps:
-        bundle = app.get("bundleIdentifier") or app.get("CFBundleIdentifier")
+        bundle = app.get("bundleIdentifier")
         if not bundle:
             continue
-        values = {
-            bundle,
-            app.get("displayName"),
-            app.get("localizedName"),
-            app.get("name"),
-            app.get("bundleName"),
-            app.get("CFBundleDisplayName"),
-            app.get("CFBundleName"),
-        }
+        values = (bundle, app.get("CFBundleDisplayName"), app.get("CFBundleName"))
         if any(isinstance(value, str) and value.casefold() == query for value in values):
             matches.append(bundle)
     matches = list(dict.fromkeys(matches))
@@ -226,15 +243,24 @@ def _resolve_app_bundle(name, apps):
     raise RuntimeError(f"multiple installed apps match {name!r}: {matches}")
 
 
+def _normalize_apps(data):
+    if not isinstance(data, dict):
+        raise RuntimeError(f"unexpected installed-app response: {type(data).__name__}")
+    return [
+        {**(info if isinstance(info, dict) else {}), "bundleIdentifier": bundle}
+        for bundle, info in data.items()
+    ]
+
+
 def open_app(name):
     _require_device()
-    apps = _json_pm3("developer", "core-device", "list-apps")
+    apps = _normalize_apps(_json_pm3("apps", "list"))
     bundle = _resolve_app_bundle(name, apps)
     # CoreDevice's current CLI requires at least one application argument even
     # when the service call itself accepts none. DVT launch accepts the bundle
     # identifier alone and reaches the same user-visible result without a dummy
     # argument.
-    _run_pm3("developer", "dvt", "launch", bundle)
+    _run_pm3("developer", "dvt", "launch", "--no-kill-existing", bundle)
     return bundle
 
 

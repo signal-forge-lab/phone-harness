@@ -8,6 +8,7 @@ dependencies = [
     "pyobjc-framework-Vision; sys_platform == 'darwin'",
     "pyobjc-framework-AppKit; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
+    "Pillow>=10; sys_platform == 'win32'",
 ]
 
 [project.scripts]

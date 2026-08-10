@@ -9,6 +9,10 @@ The harness now has two host transports:
 - **Windows** — `pymobiledevice3` CoreDevice + local PaddleOCR PP-OCRv6 +
   Universal HID.
 
+> **Windows development status:** the backend, packaging, local OCR and
+> device-free tests are implemented. Real-device acceptance is still required
+> before the Windows path should be treated as fully verified.
+
 On macOS the iPhone Mirroring window is the transport. On Windows the harness
 talks to the real phone over Apple's USB/CoreDevice services through
 `pymobiledevice3`. In both cases the agent works from screenshots, local OCR and
@@ -36,16 +40,19 @@ Use Python 3.12 and install the Windows prerequisites described in
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -U pip setuptools wheel
-.venv\Scripts\python.exe -m pip install pymobiledevice3
+.venv\Scripts\python.exe -m pip install pymobiledevice3==10.7.1
 .venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 .venv\Scripts\python.exe -m pip install paddleocr==3.7.0
-.venv\Scripts\python.exe -m pip install -e . --no-deps
+.venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\phone-harness.exe --doctor
 ```
 
-The Windows backend deliberately keeps `pymobiledevice3` as an external
-dependency instead of copying or vendoring its GPL-3.0-or-later source into
-this MIT repository.
+The Windows backend is verified against the `pymobiledevice3` **v10.7.1** tag.
+It deliberately keeps that GPL-3.0-or-later project as an external dependency
+instead of copying or vendoring its source into this MIT repository.
+That process boundary is an engineering boundary, not a legal conclusion;
+review the final GPL distribution obligations before publishing a bundled
+installer, binary distribution, or commercial package.
 
 ### macOS
 
@@ -112,6 +119,15 @@ flick for pages), and input while the window isn't frontmost (swallowed).
 
 ## Usage
 
+Cross-platform one-liners:
+
+```bash
+phone-harness -c "print(screen_info())"
+phone-harness -c "open_app('Notes'); print([o['text'] for o in ocr()][:10])"
+```
+
+On Unix shells, heredocs remain convenient for multi-line scripts:
+
 ```bash
 ./phone-harness <<'PY'
 open_app("Notes")
@@ -140,8 +156,9 @@ reaches for it on its own.
 - `agent-workspace/agent_helpers.py` — helper code the agent edits; auto-loaded
   into every script's namespace
 
-The mirror transport is stateless (window bounds and captures are re-queried per
-call), so there is no daemon — every invocation is self-contained.
+There is no phone-harness daemon. macOS window bounds/captures are re-queried
+per call. Windows keeps only the selected USB device and latest capture size in
+the current process; a new `phone-harness` invocation starts fresh.
 
 ## Development
 

@@ -18,17 +18,19 @@ Verified Python environment:
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -U pip setuptools wheel
-.venv\Scripts\python.exe -m pip install pymobiledevice3
+.venv\Scripts\python.exe -m pip install pymobiledevice3==10.7.1
 .venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 .venv\Scripts\python.exe -m pip install paddleocr==3.7.0
-.venv\Scripts\python.exe -m pip install -e . --no-deps
+.venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\python.exe -m pip check
 .venv\Scripts\phone-harness.exe --doctor
 ```
 
-`--no-deps` is intentional on Windows: this repository does not vendor or
-silently bundle `pymobiledevice3` (GPL-3.0-or-later). Install that external
-dependency explicitly as shown above.
+`pymobiledevice3` is installed explicitly and remains an external
+GPL-3.0-or-later dependency; its source is not copied or vendored into this
+repository. The Windows implementation is verified against its **v10.7.1**
+tag. The final `pip install -e .` only installs this package's own declared
+platform dependencies (currently Pillow on Windows).
 
 First transport check:
 
@@ -53,6 +55,8 @@ bypass it.
 
 The Windows doctor verifies the dependency stack, usbmux, a connected phone,
 CoreDevice display info, screenshot capture and PP-OCRv6 OCR in that order.
+The first PP-OCRv6 invocation downloads the medium detection/recognition models
+to PaddleX's user cache; later runs reuse the local model files.
 
 ### macOS
 
@@ -122,8 +126,8 @@ skill named `phone-harness` with `phone-harness skill` as its body (the Fast
 Path does this for both Claude Code and Codex). The skill's trigger is:
 
 ```text
-Control the user's iPhone through the Mac's iPhone Mirroring window: open apps,
-tap, type, swipe, read the screen.
+Control the user's real iPhone from macOS or Windows: read the screen with local
+OCR, open apps, tap, type, swipe, and verify results.
 ```
 
 Re-run the `phone-harness skill > …/SKILL.md` lines after pulling updates so the

@@ -1,4 +1,4 @@
-"""Phone control via iPhone Mirroring.
+"""Cross-platform phone control helpers.
 
 Core helpers live here. Agent-editable helpers live in
 PH_AGENT_WORKSPACE/agent_helpers.py (defaults to <repo>/agent-workspace).
@@ -39,10 +39,11 @@ _BLOCKED_MARKERS = ("iphone in use", "lock your iphone", "mirroring ended",
 
 
 def connection_state():
-    """'ready' | 'blocked' | 'no-window' | 'not-running'.
+    """Return the host-specific connection state.
 
-    'blocked' means a connect / 'iPhone in Use' / paused interstitial is on
-    screen. Cheap to call; use it to decide whether to proceed."""
+    Windows: ready / no-device / ambiguous-device / transport-unavailable.
+    macOS: ready / blocked / no-window / not-running.
+    """
     if _WINDOWS:
         return mirror.connection_state()
     if mirror.running_app() is None:
@@ -55,12 +56,11 @@ def connection_state():
 
 
 def ensure_mirroring():
-    """Return the mirroring window if the phone is connected and ready.
+    """Return active phone-screen bounds when the host backend is ready.
 
-    Never launches the app, taps Connect/Continue, or polls to reconnect —
-    resuming mirroring is physical and only the user can do it. If the session
-    isn't ready, raises with instructions for the user. STOP and relay that
-    message; do not try to tap through the connect screen yourself.
+    The legacy name comes from the macOS Mirroring backend. It never bypasses a
+    physical trust/connect step; if the session is not ready, it raises with a
+    host-specific recovery message.
     """
     state = connection_state()
     if _WINDOWS:
@@ -97,14 +97,18 @@ def ensure_mirroring():
 
 
 def screen_info():
-    """{window, frontmost, img_px} — bounds in screen points, capture size in px."""
+    """Return host bounds and capture size.
+
+    macOS ``window`` coordinates are global screen points. Windows coordinates
+    are screenshot pixels with an origin of (0, 0).
+    """
     path, win = mirror.capture()
     w, h = _ocr.image_size(path)
     return {"window": win, "frontmost": mirror.is_frontmost(), "img_px": [w, h]}
 
 
 def screenshot(path=None):
-    """Capture the phone window to a PNG and return its path. View it to see
+    """Capture the phone screen to a PNG and return its path. View it to see
     the phone; combine with ocr() for coordinates."""
     p, _ = mirror.capture(path)
     return p
@@ -118,7 +122,7 @@ def screen(path=None):
 # --- reading the screen ---
 
 def ocr(min_confidence=0.3):
-    """All visible text with tap-ready screen-point centers:
+    """All visible text with tap-ready centers in the active host coordinate space:
     [{text, confidence, x, y, w, h}]. This is the element tree — prefer it
     over eyeballing screenshots for anything with a text label."""
     path, win = mirror.capture()
@@ -128,6 +132,8 @@ def ocr(min_confidence=0.3):
 
 def find_text(query, exact=False):
     """OCR results matching query (case-insensitive substring by default)."""
+    if not query:
+        raise ValueError("text query must not be empty")
     q = query.lower()
     return [o for o in ocr()
             if (o["text"].lower() == q if exact else q in o["text"].lower())]
@@ -151,14 +157,14 @@ def tap_text(query, index=None, exact=False):
     return hit
 
 
-# --- gestures relative to the phone window ---
+# --- gestures relative to the visible phone screen ---
 
 def _win():
     return mirror.ensure_window()
 
 
 def swipe(direction, distance=0.4):
-    """swipe('up'|'down'|'left'|'right') — a touch-drag centered in the window.
+    """swipe('up'|'down'|'left'|'right') — a touch-drag centered on screen.
     Direction is finger motion: swipe('up') moves content up (scrolls down)."""
     w = _win()
     cx, cy = w["x"] + w["w"] / 2, w["y"] + w["h"] / 2
@@ -174,8 +180,7 @@ def swipe(direction, distance=0.4):
 
 
 def scroll(amount=300):
-    """Scroll-gesture at window center. Positive scrolls content down the way
-    a trackpad two-finger-up does; use swipe() when momentum matters."""
+    """Scroll at screen center; use swipe() when momentum matters."""
     w = _win()
     mirror.scroll_wheel(-amount, w["x"] + w["w"] / 2, w["y"] + w["h"] / 2)
 
@@ -203,6 +208,8 @@ def _text_set(boxes):
 
 def _overlap(a, b):
     """Jaccard overlap of two text sets: ~1.0 = same screen, low = it moved."""
+    if not a and not b:
+        return 1.0
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
@@ -324,7 +331,7 @@ def scroll_collect(extract=None, key=None, direction="up", amount=0.6,
 # --- navigation ---
 
 def home():
-    """Go to the iPhone Home Screen (Cmd+1)."""
+    """Go to the iPhone Home Screen."""
     press("cmd+1")
     time.sleep(0.8)
 
@@ -337,7 +344,7 @@ def app_switcher():
 
 
 def open_app(name):
-    """Open an app via Spotlight (Cmd+3): type name, return, wait for launch."""
+    """Open an installed app by name and wait for the resulting screen to settle."""
     if _WINDOWS:
         mirror.open_app(name)
         wait_stable()

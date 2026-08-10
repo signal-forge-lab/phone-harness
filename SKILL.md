@@ -11,6 +11,10 @@ CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
 `agent-workspace/agent_helpers.py`. For setup or transport problems, read
 `install.md`.
 
+The Windows backend is currently **implementation-complete but pending
+real-device acceptance**. Do not represent Windows tap/scroll/type/open-app
+behavior as verified until the physical-device acceptance suite has passed.
+
 ## When Not to Use
 
 If the task is doable on the Mac or the web — a website, an API, an app with a
@@ -20,13 +24,23 @@ user's phone number or 2FA, testing how something looks on the phone.
 
 ## Usage
 
+Prefer `-c` for short cross-platform actions:
+
+```bash
+phone-harness -c "print(screen_info())"
+phone-harness -c "open_app('Notes'); print([o['text'] for o in ocr()][:10])"
+```
+
+On Unix shells, heredocs are also available for multi-line commands:
+
 ```bash
 phone-harness <<'PY'
 print(screen_info())
 PY
 ```
 
-- Invoke as `phone-harness`. Use heredocs for multi-line commands.
+- Invoke as `phone-harness`. Use `-c` for portable one-liners; use stdin or a
+  Unix heredoc when a task needs multiple lines.
 - Helpers are pre-imported. macOS coordinates are global screen points;
   Windows coordinates are screenshot pixels. Prefer OCR-derived coordinates so
   this distinction stays internal.
@@ -42,8 +56,9 @@ PY
   visible. Multiple matches are rejected unless you deliberately pass an
   explicit `index`; refine the query instead of guessing.
 - Icons without labels: `screenshot()`, view the image, compute the point
-  (image px ÷ scale + window origin — `screen_info()` has both sizes), then
-  `tap(x, y)`.
+  and call `tap(x, y)`. On Windows, screenshot pixels are already the public
+  tap coordinate space. On macOS, convert image pixels to global screen points
+  using the capture/window scale and window origin from `screen_info()`.
 - **Verify after every action**: `wait_stable()` then `ocr()`/`screenshot()`.
   There is no DOM to assert against; the capture is the ground truth.
 - Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
@@ -102,20 +117,25 @@ required:
 
 ## Gotchas
 
-- **Unfocused input is swallowed silently.** The window must be frontmost;
+- **macOS: unfocused input is swallowed silently.** The window must be frontmost;
   helpers call `activate()` but if a click steals focus mid-task, re-activate.
-- **The window is a video stream.** macOS accessibility sees nothing inside
+- **macOS: the window is a video stream.** macOS accessibility sees nothing inside
   it; AppleScript `click at` fails silently. Only HID-level CGEvents work.
-- **The window moves.** Never cache coordinates across calls; `ocr()` and
+- **macOS: the window moves.** Never cache coordinates across calls; `ocr()` and
   `swipe()` re-query bounds every time.
-- **Unlocking the physical phone pauses the session** ("iPhone in Use"). Do not
+- **macOS: unlocking the physical phone pauses the session** ("iPhone in Use"). Do not
   tap through the resume screen — stop and ask the user to lock/connect the
   phone (see "Connection is the user's job").
+- **Windows: coordinates come from the latest screenshot.** Capture/OCR before
+  coordinate-based input; after a rotation or major display change, do not
+  reuse coordinates from an older screenshot.
 - **`type_text` needs an iOS text field focused first** — tap the field, wait
   for the keyboard, then type.
-- **Home-Screen labels are not tap targets.** `tap_text("Weather")` hits the
-  label and nothing happens; the icon is ~35 points above it. Use
-  `tap_icon("Weather")` (agent helper) on the Home Screen; `tap_text` works
-  fine for in-app buttons and list rows.
+- **macOS Home-Screen labels are not tap targets.** `tap_text("Weather")` hits
+  the label and nothing happens; the icon is ~35 Mirroring points above it.
+  `tap_icon("Weather")` is therefore a **macOS-only** calibrated helper.
+  Windows must use `open_app("Weather")` until a screenshot-pixel icon offset
+  is measured on real hardware. `tap_text` remains appropriate for in-app text
+  controls on both hosts.
 - Mouse taps map to touches 1:1, but there is no multi-touch: no pinch, no
   two-finger gestures.

@@ -1,10 +1,17 @@
 import unittest
+import sys
 from unittest.mock import patch
 
 from phone_harness import helpers
 
 
 class TextTargetingTests(unittest.TestCase):
+    def test_find_text_rejects_empty_query_without_ocr(self):
+        with patch.object(helpers, "ocr") as ocr:
+            with self.assertRaises(ValueError):
+                helpers.find_text("")
+        ocr.assert_not_called()
+
     def test_find_text_can_require_exact_match(self):
         boxes = [
             {"text": "Settings", "confidence": 0.9},
@@ -32,6 +39,20 @@ class TextTargetingTests(unittest.TestCase):
             hit = helpers.tap_text("Settings", index=1)
         self.assertIs(hit, boxes[1])
         tap.assert_called_once_with(30, 40)
+
+class ScrollDetectionTests(unittest.TestCase):
+    def test_empty_screens_are_identical(self):
+        self.assertEqual(helpers._overlap(frozenset(), frozenset()), 1.0)
+
+    def test_one_empty_screen_means_no_overlap(self):
+        self.assertEqual(helpers._overlap(frozenset({"Settings"}), frozenset()), 0.0)
+
+
+class AgentHelperCompatibilityTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "Windows coordinate safety")
+    def test_tap_icon_is_disabled_until_windows_offset_is_calibrated(self):
+        with self.assertRaisesRegex(RuntimeError, "open_app"):
+            helpers.tap_icon("Weather")
 
 
 if __name__ == "__main__":
