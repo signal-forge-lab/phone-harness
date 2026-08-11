@@ -54,7 +54,11 @@ enabled. The agent must stop for that physical step rather than attempting to
 bypass it.
 
 The Windows doctor verifies the dependency stack, usbmux, a connected phone,
-CoreDevice display info, screenshot capture and PP-OCRv6 OCR in that order.
+CoreDevice display info, native remote-input capability, screenshot capture and
+PP-OCRv6 OCR in that order. Real-device testing on iOS 26.6 confirmed that the
+current CoreDevice Universal HID touchscreen/virtual-keyboard path requires iOS
+27.0 or later. On older iOS, doctor reports that limitation while still testing
+capture/OCR; do not treat the native tap/type path as available.
 The first PP-OCRv6 invocation downloads the medium detection/recognition models
 to PaddleX's user cache; later runs reuse the local model files.
 

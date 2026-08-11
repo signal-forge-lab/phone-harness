@@ -25,6 +25,21 @@ class CoordinateTests(unittest.TestCase):
         data = {"displays": [{"currentMode": {"size": {"width": 1179, "height": 2556}}}]}
         self.assertEqual(windows._display_size(data), (1179, 2556))
 
+    def test_display_size_accepts_ios_26_list_shape_and_primary_display(self):
+        data = {
+            "displays": [
+                {
+                    "primary": False,
+                    "currentMode": {"size": [0.0, 0.0]},
+                },
+                {
+                    "primary": True,
+                    "currentMode": {"size": [1206.0, 2622.0]},
+                },
+            ]
+        }
+        self.assertEqual(windows._display_size(data), (1206, 2622))
+
 
 class DeviceSelectionTests(unittest.TestCase):
     def test_device_discovery_is_usb_only(self):
@@ -38,6 +53,17 @@ class DeviceSelectionTests(unittest.TestCase):
             windows._select_device([])
         with self.assertRaises(RuntimeError):
             windows._select_device(["device-1", "device-2"])
+
+    def test_remote_control_support_starts_at_ios_27(self):
+        self.assertFalse(windows._remote_control_supported("26.6"))
+        self.assertTrue(windows._remote_control_supported("27.0"))
+
+    def test_tap_rejects_ios_26_before_sending_hid(self):
+        with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_run_pm3") as run:
+            with self.assertRaisesRegex(RuntimeError, "iOS 27.0"):
+                windows.tap(100, 200)
+        run.assert_not_called()
 
 
 class AppResolutionTests(unittest.TestCase):
@@ -119,6 +145,28 @@ class TransportRobustnessTests(unittest.TestCase):
         with patch("phone_harness.windows.subprocess.run", side_effect=TimeoutExpired(["pm3"], 5)):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 windows._run_pm3("usbmux", "list", timeout=5)
+
+    def test_run_pm3_rejects_zero_exit_device_error(self):
+        failed = CompletedProcess(
+            ["pm3"],
+            0,
+            stdout="some output",
+            stderr="2026-08-11 ERROR Remote control requires iOS 27.0 or later on this device.",
+        )
+        with patch("phone_harness.windows.subprocess.run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "iOS 27.0 or later"):
+                windows._run_pm3("developer", "core-device", "universal-hid-service", "tap")
+
+    def test_run_pm3_rejects_zero_exit_traceback(self):
+        failed = CompletedProcess(
+            ["pm3"],
+            0,
+            stdout="",
+            stderr="Traceback (most recent call last):\nCoreDeviceError: failed",
+        )
+        with patch("phone_harness.windows.subprocess.run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "CoreDeviceError"):
+                windows._run_pm3("developer", "core-device", "universal-hid-service", "session")
 
     def test_capture_preserves_existing_output_when_capture_fails(self):
         with TemporaryDirectory() as directory:

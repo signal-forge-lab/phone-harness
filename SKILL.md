@@ -11,9 +11,11 @@ CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
 `agent-workspace/agent_helpers.py`. For setup or transport problems, read
 `install.md`.
 
-The Windows backend is currently **implementation-complete but pending
-real-device acceptance**. Do not represent Windows tap/scroll/type/open-app
-behavior as verified until the physical-device acceptance suite has passed.
+Windows real-device acceptance has verified USB discovery, Developer Mode/DDI,
+1206x2622 capture, local PP-OCRv6 and the Home hardware button on iOS 26.6.
+That device also established that CoreDevice Universal HID touchscreen and
+virtual-keyboard remote control requires iOS 27.0+. Do not claim tap/scroll/type
+support on older iOS through the native HID path.
 
 ## When Not to Use
 
@@ -64,9 +66,11 @@ PY
 - Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
   `type_text("...")`, `long_press(x, y)`. `press("return")` and other raw key
   combos are macOS-only in the MVP.
-- Windows MVP: `type_text()` supports printable ASCII; `app_switcher()` and
-  arbitrary key combos are not supported. `open_app()` resolves an installed
-  app name to its bundle identifier and launches it through developer services.
+- Windows native remote input: iOS 27+ is required for CoreDevice
+  tap/drag/scroll/type. `type_text()` then supports printable ASCII.
+  `app_switcher()` and arbitrary key combos are not supported. On iOS <27,
+  screenshot/OCR and supported hardware buttons remain available; touchscreen
+  and typing need a separately provisioned backend such as WDA.
 - **Scrolling a list**: use `scroll_collect(extract, key=...)` to walk a list
   to its true end, de-duping as it goes — it returns `{items, stop, scrolls}`
   where `stop` is `'reached-end'` or `'max-scrolls'`. Use `scroll_until(done)`
@@ -75,8 +79,8 @@ PY
   new rows — a dense screen or a missed OCR line will not end the scroll
   early. Each step settles first so lazy-loaded content arrives before the
   movement check. `scroll_screen()` is the single-step primitive if you need
-  it. macOS uses wheel scrolling; the Windows backend maps the same helper to
-  a CoreDevice touch drag and must be judged by real-device behavior.
+  it. macOS uses wheel scrolling; Windows maps the same helper to a CoreDevice
+  touch drag when the connected iOS version supports native remote input.
 - Raw Quartz is a macOS-only escape hatch. Do not reach around the Windows
   backend with ad-hoc destructive `pymobiledevice3` commands.
 
@@ -129,6 +133,9 @@ required:
 - **Windows: coordinates come from the latest screenshot.** Capture/OCR before
   coordinate-based input; after a rotation or major display change, do not
   reuse coordinates from an older screenshot.
+- **Windows iOS <27:** CoreDevice media-stream remote control is unavailable on
+  the tested iOS 26.6 device. The harness fails fast instead of silently
+  accepting tap/drag/type commands.
 - **`type_text` needs an iOS text field focused first** — tap the field, wait
   for the keyboard, then type.
 - **macOS Home-Screen labels are not tap targets.** `tap_text("Weather")` hits

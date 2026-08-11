@@ -21,12 +21,14 @@ TMP.mkdir(exist_ok=True)
 LOG = logging.getLogger(__name__)
 _SCREEN_SIZE = None
 _DEVICE_UDID = None
+_PRODUCT_VERSION = None
 
 
 def _clear_device_cache():
-    global _DEVICE_UDID, _SCREEN_SIZE
+    global _DEVICE_UDID, _SCREEN_SIZE, _PRODUCT_VERSION
     _DEVICE_UDID = None
     _SCREEN_SIZE = None
+    _PRODUCT_VERSION = None
 
 
 def _run_pm3(*args, timeout=90):
@@ -51,7 +53,7 @@ def _run_pm3(*args, timeout=90):
         LOG.debug("operation=%s duration=%.3f result=timeout", operation, time.perf_counter() - started)
         raise RuntimeError(f"pymobiledevice3 timed out after {timeout}s: {operation}") from exc
     stdout, stderr = result.stdout.strip(), result.stderr.strip()
-    if result.returncode != 0 or (not stdout and " ERROR " in stderr):
+    if result.returncode != 0 or " ERROR " in stderr or "Traceback (" in stderr:
         _clear_device_cache()
         LOG.debug("operation=%s duration=%.3f result=fail", operation, time.perf_counter() - started)
         detail = stderr or stdout or f"exit {result.returncode}"
@@ -88,6 +90,30 @@ def _require_device():
     return _DEVICE_UDID
 
 
+def _product_version():
+    global _PRODUCT_VERSION
+    _require_device()
+    if _PRODUCT_VERSION is None:
+        _PRODUCT_VERSION = str(_json_pm3("lockdown", "get", "--key", "ProductVersion"))
+    return _PRODUCT_VERSION
+
+
+def _remote_control_supported(version):
+    try:
+        return int(str(version).split(".", 1)[0]) >= 27
+    except ValueError:
+        return False
+
+
+def _require_remote_control():
+    version = _product_version()
+    if not _remote_control_supported(version):
+        raise RuntimeError(
+            f"CoreDevice touchscreen/virtual-keyboard remote control requires iOS 27.0 or later; "
+            f"connected device is iOS {version}"
+        )
+
+
 def connection_state():
     """Return host transport/device readiness without mutating device state."""
     try:
@@ -111,8 +137,12 @@ def activate():
 
 def _display_size(data):
     try:
-        size = data["displays"][0]["currentMode"]["size"]
-        return int(size["width"]), int(size["height"])
+        displays = data["displays"]
+        display = next((item for item in displays if item.get("primary")), displays[0])
+        size = display["currentMode"]["size"]
+        if isinstance(size, dict):
+            return int(size["width"]), int(size["height"])
+        return int(size[0]), int(size[1])
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise RuntimeError(f"cannot determine iPhone display size from CoreDevice response: {data!r}") from exc
 
@@ -175,11 +205,13 @@ def _screen_point(x, y):
 
 
 def tap(x, y):
+    _require_remote_control()
     hx, hy = _screen_point(x, y)
     _run_pm3("developer", "core-device", "universal-hid-service", "tap", hx, hy)
 
 
 def drag(x1, y1, x2, y2, duration=0.6, steps=30):
+    _require_remote_control()
     win = ensure_window()
     h1 = pixel_to_hid(x1, y1, win["w"], win["h"])
     h2 = pixel_to_hid(x2, y2, win["w"], win["h"])
@@ -212,7 +244,7 @@ def type_text(text, delay=0.03):
         return
     if not _is_printable_ascii(text):
         raise ValueError("Windows CoreDevice typing currently supports printable ASCII only")
-    _require_device()
+    _require_remote_control()
     _run_pm3("developer", "core-device", "universal-hid-service", "type", text)
 
 

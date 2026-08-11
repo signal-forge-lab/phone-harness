@@ -65,6 +65,13 @@ def _windows_doctor():
         return 1
     ok &= _check(f"display info ({win['w']}x{win['h']})", True)
 
+    product_version = windows._product_version()
+    ok &= _check(
+        f"CoreDevice touch/typing remote control (iOS {product_version})",
+        windows._remote_control_supported(product_version),
+        "native Universal HID touch/typing requires iOS 27.0 or later",
+    )
+
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         path = f.name
     try:

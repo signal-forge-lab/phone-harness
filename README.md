@@ -100,15 +100,20 @@ On **macOS**, iPhone Mirroring (Sequoia+) renders the phone as a Mac window and
 forwards real mouse and keyboard input as touches.
 
 On **Windows**, current `pymobiledevice3` exposes CoreDevice screen capture,
-display information, Universal HID tap/drag, named HID buttons and a printable
-ASCII virtual keyboard. The harness converts screenshot pixels to CoreDevice's
-0..65535 HID coordinate space at the input boundary.
+display information, named HID buttons and Universal HID remote input. The
+harness converts screenshot pixels to CoreDevice's 0..65535 HID coordinate
+space at the input boundary. Real-device testing on iOS 26.6 established an OS
+capability boundary: screenshot/OCR and hardware buttons work, while Universal
+HID touchscreen/virtual-keyboard remote control requires iOS 27.0 or later.
 
 That gives an agent the same three primitives on either host:
 
 - **See** — capture the phone and OCR locally. macOS uses Apple Vision; Windows
   uses PaddleOCR PP-OCRv6 medium. Every visible string has a tap-ready center.
-- **Act** — macOS uses CGEvents; Windows uses CoreDevice Universal HID.
+- **Act** — macOS uses CGEvents. Windows uses CoreDevice Universal HID on iOS
+  27+; older iOS versions need a separately provisioned automation backend for
+  touchscreen/typing (for example WDA) rather than pretending the HID action
+  succeeded.
 - **Verify** — screenshot again. No DOM means the capture is the ground truth.
 
 macOS-specific things that do NOT work, learned the hard way: AppleScript `click at` (silently
@@ -173,9 +178,13 @@ PY
 ## Limits
 
 - One phone, one active session.
-- Windows MVP targets iOS 17.4+ over USB; earlier iOS 17 releases can require a
-  privileged `tunneld` path.
-- Windows direct typing currently supports printable ASCII only.
+- Windows capture/OCR targets iOS 17.4+ over USB; earlier iOS 17 releases can
+  require a privileged `tunneld` path.
+- Native Windows CoreDevice touchscreen and virtual-keyboard input requires iOS
+  27.0+ on the tested/current service. On iOS 26.6 the harness intentionally
+  rejects `tap`/`drag`/scroll/`type_text` instead of reporting a false success.
+- When native CoreDevice typing is available, it currently supports printable
+  ASCII only.
 - `app_switcher()` is not part of the Windows MVP; `home()` and `open_app()` are.
 - On macOS, unlocking the physical phone pauses mirroring.
 - No multi-touch (no pinch), no camera/Face ID flows, DRM video renders black.
