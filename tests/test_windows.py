@@ -40,6 +40,15 @@ class CoordinateTests(unittest.TestCase):
         }
         self.assertEqual(windows._display_size(data), (1206, 2622))
 
+    def test_display_point_scale_reads_primary_display(self):
+        data = {
+            "displays": [
+                {"primary": False, "pointScale": 1},
+                {"primary": True, "pointScale": 3},
+            ]
+        }
+        self.assertEqual(windows._display_point_scale(data), 3)
+
 
 class DeviceSelectionTests(unittest.TestCase):
     def test_device_discovery_is_usb_only(self):
@@ -58,12 +67,39 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertFalse(windows._remote_control_supported("26.6"))
         self.assertTrue(windows._remote_control_supported("27.0"))
 
-    def test_tap_rejects_ios_26_before_sending_hid(self):
+    def test_tap_uses_wda_fallback_on_ios_26(self):
         with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_wda_point", return_value=(100, 200)), \
+                patch.object(windows, "_run_wda") as run:
+            windows.tap(300, 600)
+        run.assert_called_once_with("tap-coordinate", 100, 200)
+
+    def test_tap_keeps_coredevice_hid_on_ios_27(self):
+        with patch.object(windows, "_product_version", return_value="27.0"), \
+                patch.object(windows, "_screen_point", return_value=(123, 456)), \
                 patch.object(windows, "_run_pm3") as run:
-            with self.assertRaisesRegex(RuntimeError, "iOS 27.0"):
-                windows.tap(100, 200)
-        run.assert_not_called()
+            windows.tap(300, 600)
+        run.assert_called_once_with(
+            "developer", "core-device", "universal-hid-service", "tap", 123, 456
+        )
+
+    def test_drag_uses_wda_fallback_on_ios_26(self):
+        with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_wda_point", side_effect=[(10, 20), (30, 40)]), \
+                patch.object(windows, "_run_wda") as run:
+            windows.drag(100, 200, 300, 400, duration=0.7, steps=15)
+        run.assert_called_once_with(
+            "swipe", 10, 20, 30, 40, "--duration", 0.7,
+        )
+
+    def test_wda_point_scales_screenshot_pixels_to_logical_points(self):
+        old_scale = windows._POINT_SCALE
+        windows._POINT_SCALE = 3
+        try:
+            with patch.object(windows, "ensure_window", return_value={"w": 1206, "h": 2622}):
+                self.assertEqual(windows._wda_point(603, 1311), (201, 437))
+        finally:
+            windows._POINT_SCALE = old_scale
 
 
 class AppResolutionTests(unittest.TestCase):
@@ -131,6 +167,12 @@ class TypingTests(unittest.TestCase):
             windows.type_text("")
         require.assert_not_called()
         run.assert_not_called()
+
+    def test_ios_26_wda_typing_accepts_unicode(self):
+        with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_run_wda") as run:
+            windows.type_text("日本語")
+        run.assert_called_once_with("type", "日本語")
 
 
 class GestureSafetyTests(unittest.TestCase):
