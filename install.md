@@ -18,7 +18,7 @@ Verified Python environment:
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -U pip setuptools wheel
-.venv\Scripts\python.exe -m pip install pymobiledevice3==10.7.1
+.venv\Scripts\python.exe -m pip install "git+https://github.com/signal-forge-lab/pymobiledevice3.git@master"
 .venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 .venv\Scripts\python.exe -m pip install paddleocr==3.7.0
 .venv\Scripts\python.exe -m pip install -e .
@@ -28,9 +28,10 @@ py -3.12 -m venv .venv
 
 `pymobiledevice3` is installed explicitly and remains an external
 GPL-3.0-or-later dependency; its source is not copied or vendored into this
-repository. The Windows implementation is verified against its **v10.7.1**
-tag. The final `pip install -e .` only installs this package's own declared
-platform dependencies (currently Pillow on Windows).
+repository. The Windows path currently uses the `signal-forge-lab` fork for
+the small WDA coordinate-tap and persistent-XCTest-runner extensions required
+by the iOS 26 fallback. The final `pip install -e .` only installs this
+package's own declared platform dependencies (currently Pillow on Windows).
 
 First transport check:
 
@@ -54,13 +55,49 @@ enabled. The agent must stop for that physical step rather than attempting to
 bypass it.
 
 The Windows doctor verifies the dependency stack, usbmux, a connected phone,
-CoreDevice display info, native remote-input capability, screenshot capture and
-PP-OCRv6 OCR in that order. Real-device testing on iOS 26.6 confirmed that the
-current CoreDevice Universal HID touchscreen/virtual-keyboard path requires iOS
-27.0 or later. On older iOS, doctor reports that limitation while still testing
-capture/OCR; do not treat the native tap/type path as available.
+CoreDevice display info, the selected remote-input backend, screenshot capture
+and PP-OCRv6 OCR in that order. iOS 27+ uses native CoreDevice Universal HID.
+iOS 26 uses the signed WDA runner described below.
 The first PP-OCRv6 invocation downloads the medium detection/recognition models
 to PaddleX's user cache; later runs reuse the local model files.
+
+### Windows iOS 26 WDA setup
+
+WDA provisioning is needed once per free-development profile lifetime. The
+runtime harness then starts/reuses the installed WDA automatically; Appium is a
+setup/signing tool only and is not a permanent runtime server.
+
+From the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\windows-wda\setup_tools.ps1
+```
+
+This prepares pinned Appium/XCUITest tooling, a pinned iPASide checkout and the
+Windows `appium/resigner` binary under `tools/windows-wda/`. Generated tooling,
+profiles, certificates, signed apps and downloads are ignored by Git.
+
+Sign in to iPASide locally; never put the password or 2FA code in a chat or
+script argument:
+
+```powershell
+cd .\tools\windows-wda\ipaside-src\src\iPASide.Engine
+.\.venv\Scripts\python.exe -m ipaside_engine login YOUR_APPLE_ID
+```
+
+Then return to the repository root, provision/sign/install WDA in one command:
+
+```powershell
+.\tools\windows-wda\ipaside-src\src\iPASide.Engine\.venv\Scripts\python.exe `
+  .\tools\windows-wda\provision_and_sign_wda.py --install
+```
+
+The script keeps iPASide's original PKCS#12 identity untouched and creates only
+a temporary legacy-compatible PKCS#12 copy for `resigner`. If iOS asks, approve
+the Developer App/XCTest runner on the physical phone. Re-run the same
+`--install` command when a free-development profile expires or WDA must be
+re-signed. Normal `phone-harness` tap/drag/type calls start and reuse WDA
+automatically on iOS 26.
 
 ### macOS
 

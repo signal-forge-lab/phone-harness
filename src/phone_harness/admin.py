@@ -66,11 +66,19 @@ def _windows_doctor():
     ok &= _check(f"display info ({win['w']}x{win['h']})", True)
 
     product_version = windows._product_version()
-    ok &= _check(
-        f"CoreDevice touch/typing remote control (iOS {product_version})",
-        windows._remote_control_supported(product_version),
-        "native Universal HID touch/typing requires iOS 27.0 or later",
-    )
+    if windows._remote_control_supported(product_version):
+        ok &= _check(f"CoreDevice touch/typing remote control (iOS {product_version})", True)
+    else:
+        try:
+            windows._wda_runner_bundle()
+        except RuntimeError as exc:
+            ok &= _check(
+                f"WDA touch/typing fallback (iOS {product_version})",
+                False,
+                f"provision and install the phone-harness WDA runner ({exc})",
+            )
+        else:
+            ok &= _check(f"WDA touch/typing fallback (iOS {product_version})", True)
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         path = f.name

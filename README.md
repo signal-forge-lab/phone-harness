@@ -99,21 +99,19 @@ capture silently do nothing, watch for a macOS permission prompt. See
 On **macOS**, iPhone Mirroring (Sequoia+) renders the phone as a Mac window and
 forwards real mouse and keyboard input as touches.
 
-On **Windows**, current `pymobiledevice3` exposes CoreDevice screen capture,
-display information, named HID buttons and Universal HID remote input. The
-harness converts screenshot pixels to CoreDevice's 0..65535 HID coordinate
-space at the input boundary. Real-device testing on iOS 26.6 established an OS
-capability boundary: screenshot/OCR and hardware buttons work, while Universal
-HID touchscreen/virtual-keyboard remote control requires iOS 27.0 or later.
+On **Windows**, `pymobiledevice3` exposes CoreDevice screen capture, display
+information and named HID buttons. iOS 27+ also supports CoreDevice Universal
+HID remote input. On iOS 26, phone-harness automatically uses a provisioned
+WebDriverAgent (WDA) fallback for touch/drag/type and keeps that XCTest runner
+alive instead of restarting it for every action.
 
 That gives an agent the same three primitives on either host:
 
 - **See** — capture the phone and OCR locally. macOS uses Apple Vision; Windows
   uses PaddleOCR PP-OCRv6 medium. Every visible string has a tap-ready center.
 - **Act** — macOS uses CGEvents. Windows uses CoreDevice Universal HID on iOS
-  27+; older iOS versions need a separately provisioned automation backend for
-  touchscreen/typing (for example WDA) rather than pretending the HID action
-  succeeded.
+  27+ and the provisioned WDA fallback on iOS 26. Screenshot pixels are
+  converted to the backend's coordinate system at the transport boundary.
 - **Verify** — screenshot again. No DOM means the capture is the ground truth.
 
 macOS-specific things that do NOT work, learned the hard way: AppleScript `click at` (silently

@@ -12,10 +12,9 @@ CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
 `install.md`.
 
 Windows real-device acceptance has verified USB discovery, Developer Mode/DDI,
-1206x2622 capture, local PP-OCRv6 and the Home hardware button on iOS 26.6.
-That device also established that CoreDevice Universal HID touchscreen and
-virtual-keyboard remote control requires iOS 27.0+. Do not claim tap/scroll/type
-support on older iOS through the native HID path.
+1206x2622 capture, local PP-OCRv6, Home, coordinate tap, drag and typing on iOS
+26.6. CoreDevice Universal HID touchscreen/virtual-keyboard input still requires
+iOS 27.0+, so iOS 26 automatically uses the provisioned persistent WDA fallback.
 
 ## When Not to Use
 
@@ -47,7 +46,7 @@ PY
   Windows coordinates are screenshot pixels. Prefer OCR-derived coordinates so
   this distinction stays internal.
 - On macOS, input helpers focus iPhone Mirroring automatically. On Windows,
-  input goes directly through CoreDevice.
+  iOS 27+ uses CoreDevice HID and iOS 26 uses the persistent WDA fallback.
 
 ## Screen Workflow
 
@@ -66,11 +65,10 @@ PY
 - Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
   `type_text("...")`, `long_press(x, y)`. `press("return")` and other raw key
   combos are macOS-only in the MVP.
-- Windows native remote input: iOS 27+ is required for CoreDevice
-  tap/drag/scroll/type. `type_text()` then supports printable ASCII.
-  `app_switcher()` and arbitrary key combos are not supported. On iOS <27,
-  screenshot/OCR and supported hardware buttons remain available; touchscreen
-  and typing need a separately provisioned backend such as WDA.
+- Windows remote input: iOS 27+ uses CoreDevice tap/drag/scroll/type and its
+  virtual-keyboard path supports printable ASCII. iOS 26 uses the provisioned
+  persistent WDA fallback for tap/drag/scroll/type, including Unicode typing.
+  `app_switcher()` and arbitrary key combos are not supported.
 - **Scrolling a list**: use `scroll_collect(extract, key=...)` to walk a list
   to its true end, de-duping as it goes — it returns `{items, stop, scrolls}`
   where `stop` is `'reached-end'` or `'max-scrolls'`. Use `scroll_until(done)`

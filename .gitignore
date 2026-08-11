@@ -3,3 +3,9 @@ __pycache__/
 dist/
 *.egg-info/
 .venv/
+tools/windows-wda/node_modules/
+tools/windows-wda/ipaside-src/
+tools/windows-wda/bin/
+tools/windows-wda/profiles/
+tools/windows-wda/signed-wda/
+tools/windows-wda/.downloads/

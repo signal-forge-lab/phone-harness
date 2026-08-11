@@ -1,0 +1,9 @@
+{
+  "name": "phone-harness-windows-wda-tools",
+  "private": true,
+  "version": "0.1.0",
+  "devDependencies": {
+    "appium": "3.6.0",
+    "appium-xcuitest-driver": "12.3.1"
+  }
+}
