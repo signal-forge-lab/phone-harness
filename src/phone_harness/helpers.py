@@ -5,7 +5,7 @@ PH_AGENT_WORKSPACE/agent_helpers.py (defaults to <repo>/agent-workspace).
 On macOS, raw Quartz remains available as an escape hatch. Windows uses the
 CoreDevice backend and should stay within its explicit helpers.
 """
-import hashlib, importlib.util, os, sys, time
+import hashlib, importlib, importlib.util, os, sys, time
 from pathlib import Path
 
 _WINDOWS = sys.platform == "win32"
@@ -13,7 +13,21 @@ if _WINDOWS:
     from . import paddle_ocr as _ocr
     from . import windows as mirror
 else:
-    from . import mirror, ocr as _ocr
+    from . import ocr as _ocr
+
+    # The macOS background backend avoids taking focus. If its private SkyLight
+    # symbols are unavailable, preserve upstream's fallback to classic mirroring.
+    _BACKGROUND = os.environ.get("PHONE_HARNESS_BACKGROUND", "1").lower() not in (
+        "0", "false", "no"
+    )
+    if _BACKGROUND:
+        try:
+            mirror = importlib.import_module(".background", __package__)
+        except Exception:
+            mirror = importlib.import_module(".mirror", __package__)
+            _BACKGROUND = False
+    else:
+        mirror = importlib.import_module(".mirror", __package__)
 
 tap = mirror.tap
 long_press = mirror.long_press
