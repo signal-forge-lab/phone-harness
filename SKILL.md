@@ -12,9 +12,10 @@ CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
 `install.md`.
 
 Windows real-device acceptance has verified USB discovery, Developer Mode/DDI,
-1206x2622 capture, local PP-OCRv6, Home, coordinate tap, drag and typing on iOS
-26.6. CoreDevice Universal HID touchscreen/virtual-keyboard input still requires
-iOS 27.0+, so iOS 26 automatically uses the provisioned persistent WDA fallback.
+1206x2622 capture, WDA accessibility, local PP-OCRv6 fallback, Home, coordinate
+tap, drag and typing on iOS 26.6. CoreDevice Universal HID touchscreen/
+virtual-keyboard input still requires iOS 27.0+, so iOS 26 automatically uses
+the provisioned persistent WDA fallback.
 
 ## When Not to Use
 
@@ -43,14 +44,15 @@ PY
 - Invoke as `phone-harness`. Use `-c` for portable one-liners; use stdin or a
   Unix heredoc when a task needs multiple lines.
 - Helpers are pre-imported. macOS coordinates are global screen points;
-  Windows coordinates are screenshot pixels. Prefer OCR-derived coordinates so
-  this distinction stays internal.
+  Windows coordinates are screenshot pixels. Prefer `elements()`/`tap_text()`;
+  Windows uses WDA accessibility first and OCR only as fallback.
 - On macOS, input helpers focus iPhone Mirroring automatically. On Windows,
   iOS 27+ uses CoreDevice HID and iOS 26 uses the persistent WDA fallback.
 
 ## Screen Workflow
 
-- Prefer `ocr()` over eyeballing screenshots: every visible string comes back
+- Prefer `elements()` (or compatibility alias `ocr()`) over eyeballing screenshots:
+  every visible string comes back
   with a tap-ready center point — `[{text, confidence, x, y, w, h, ...}]`.
   Filter in Python before printing.
 - Tap by label: `tap_text("Weather")`. On failure it raises with what IS
@@ -72,7 +74,7 @@ PY
 - **Scrolling a list**: use `scroll_collect(extract, key=...)` to walk a list
   to its true end, de-duping as it goes — it returns `{items, stop, scrolls}`
   where `stop` is `'reached-end'` or `'max-scrolls'`. Use `scroll_until(done)`
-  to stop when a predicate on the visible OCR is met. Both decide "done" from
+  to stop when a predicate on the visible elements is met. Both decide "done" from
   whether the **screen actually moved**, not from whether your parser found
   new rows — a dense screen or a missed OCR line will not end the scroll
   early. Each step settles first so lazy-loaded content arrives before the

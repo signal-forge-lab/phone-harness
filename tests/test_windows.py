@@ -1,4 +1,6 @@
+import os
 import unittest
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from subprocess import CompletedProcess, TimeoutExpired
@@ -51,10 +53,33 @@ class CoordinateTests(unittest.TestCase):
 
 
 class DeviceSelectionTests(unittest.TestCase):
-    def test_device_discovery_is_usb_only(self):
-        with patch.object(windows, "_json_pm3", return_value=["device-1"]) as query:
+    def test_usb_is_default_transport(self):
+        with patch.dict(os.environ, {}, clear=False), \
+                patch.object(windows, "_usb_device_udids", return_value=["device-1"]):
+            os.environ.pop("PHONE_HARNESS_TRANSPORT", None)
             self.assertEqual(windows.device_udids(), ["device-1"])
-        query.assert_called_once_with("usbmux", "list", "--usb", "--simple")
+
+    def test_wifi_transport_discovers_tunneld_device(self):
+        with patch.dict(os.environ, {"PHONE_HARNESS_TRANSPORT": "wifi"}), \
+                patch.object(windows, "_tunneld_wifi_devices", return_value=[("device-1", ("fd00::1", 12345))]):
+            self.assertEqual(windows.device_udids(), ["device-1"])
+
+    def test_tunneld_listing_returns_rsd_endpoint(self):
+        payload = b'{"device-1":[{"tunnel-address":"fd00::1","tunnel-port":12345,"interface":"host.local"}]}'
+        with patch.object(windows, "urlopen", return_value=BytesIO(payload)):
+            self.assertEqual(windows._tunneld_wifi_devices(), [("device-1", ("fd00::1", 12345))])
+
+    def test_auto_transport_prefers_usb(self):
+        with patch.dict(os.environ, {"PHONE_HARNESS_TRANSPORT": "auto"}), \
+                patch.object(windows, "_usb_device_udids", return_value=["usb-device"]), \
+                patch.object(windows, "_tunneld_wifi_devices") as wifi:
+            self.assertEqual(windows.device_udids(), ["usb-device"])
+        wifi.assert_not_called()
+
+    def test_invalid_transport_is_rejected(self):
+        with patch.dict(os.environ, {"PHONE_HARNESS_TRANSPORT": "bluetooth"}):
+            with self.assertRaisesRegex(RuntimeError, "usb, wifi, or auto"):
+                windows.device_udids()
 
     def test_select_device_requires_exactly_one_device(self):
         self.assertEqual(windows._select_device(["device-1"]), "device-1")
@@ -100,6 +125,35 @@ class DeviceSelectionTests(unittest.TestCase):
                 self.assertEqual(windows._wda_point(603, 1311), (201, 437))
         finally:
             windows._POINT_SCALE = old_scale
+
+    def test_accessibility_elements_scale_wda_rects_to_screenshot_pixels(self):
+        old_scale = windows._POINT_SCALE
+        windows._POINT_SCALE = 3
+        items = [{
+            "type": "XCUIElementTypeButton",
+            "name": "eight",
+            "label": "8",
+            "value": None,
+            "visible": "true",
+            "rect": {"x": "100", "y": "200", "width": "50", "height": "60"},
+        }]
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_wda_runner_bundle", return_value="runner"), \
+                    patch.object(windows, "_json_wda", return_value=items):
+                result = windows.accessibility_elements()
+        finally:
+            windows._POINT_SCALE = old_scale
+        self.assertEqual(result[0]["text"], "8")
+        self.assertEqual(result[0]["source"], "accessibility")
+        self.assertEqual(result[0]["x"], 375)
+        self.assertEqual(result[0]["y"], 690)
+
+    def test_tap_accessibility_prefers_accessibility_id(self):
+        item = {"name": "com.example.button", "label": "Button", "x": 10, "y": 20}
+        with patch.object(windows, "_run_wda") as run:
+            windows.tap_accessibility(item)
+        run.assert_called_once_with("tap", "com.example.button", "--using", "accessibility id")
 
 
 class AppResolutionTests(unittest.TestCase):
@@ -203,6 +257,24 @@ class StabilityTests(unittest.TestCase):
 
 
 class TransportRobustnessTests(unittest.TestCase):
+    def test_wifi_pm3_commands_use_tunneld_target(self):
+        old_udid = windows._DEVICE_UDID
+        old_transport = windows._DEVICE_TRANSPORT
+        old_rsd = windows._DEVICE_RSD
+        windows._DEVICE_UDID = "device-1"
+        windows._DEVICE_TRANSPORT = "wifi"
+        windows._DEVICE_RSD = ("fd00::1", 12345)
+        ok = CompletedProcess(["pm3"], 0, stdout="{}", stderr="")
+        try:
+            with patch("phone_harness.windows.subprocess.run", return_value=ok) as run:
+                windows._run_pm3("apps", "list")
+            command = run.call_args.args[0]
+            self.assertEqual(command[-3:], ["--rsd", "fd00::1", "12345"])
+        finally:
+            windows._DEVICE_UDID = old_udid
+            windows._DEVICE_TRANSPORT = old_transport
+            windows._DEVICE_RSD = old_rsd
+
     def test_run_pm3_normalizes_timeouts(self):
         with patch("phone_harness.windows.subprocess.run", side_effect=TimeoutExpired(["pm3"], 5)):
             with self.assertRaisesRegex(RuntimeError, "timed out"):

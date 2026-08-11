@@ -81,16 +81,18 @@ def ensure_mirroring():
         if state == "ready":
             return mirror.ensure_window()
         if state == "no-device":
+            mode = mirror._transport_mode()
             raise RuntimeError(
-                "No iPhone is visible through Apple Mobile Device/usbmux. "
-                "Connect and unlock the phone, approve Trust if prompted, then retry.")
+                f"No iPhone is visible through the configured Windows transport ({mode}). "
+                "For USB, connect/unlock the phone and approve Trust. For Wi-Fi, start "
+                "pymobiledevice3 tunneld and ensure the paired phone is reachable on the same network.")
         if state == "ambiguous-device":
             raise RuntimeError(
-                "More than one iPhone is visible through usbmux. Disconnect all but the "
-                "single phone intended for this session before retrying.")
+                "More than one iPhone is visible through the configured transport. Set "
+                "PHONE_HARNESS_UDID to select one device before retrying.")
         raise RuntimeError(
-            "Apple Mobile Device/usbmux is unavailable on Windows. Repair the "
-            "Apple device layer before retrying.")
+            "The configured Windows phone transport is unavailable. Repair Apple Mobile Device "
+            "for USB, or start pymobiledevice3 tunneld from an elevated terminal for Wi-Fi.")
     if state == "ready":
         mirror.activate()
         return mirror.find_window()
@@ -135,13 +137,28 @@ def screen(path=None):
 
 # --- reading the screen ---
 
-def ocr(min_confidence=0.3):
-    """All visible text with tap-ready centers in the active host coordinate space:
-    [{text, confidence, x, y, w, h}]. This is the element tree — prefer it
-    over eyeballing screenshots for anything with a text label."""
+def elements(min_confidence=0.3):
+    """Visible text/elements with tap-ready centers.
+
+    Windows prefers WDA accessibility and falls back to local OCR when the
+    current UI is not exposed through accessibility. macOS keeps using Vision
+    OCR.
+    """
+    if _WINDOWS:
+        try:
+            accessible = mirror.accessibility_elements()
+        except RuntimeError:
+            accessible = []
+        if accessible:
+            return accessible
     path, win = mirror.capture()
     return [o for o in _ocr.recognize(path, win)
             if o["confidence"] >= min_confidence]
+
+
+def ocr(min_confidence=0.3):
+    """Compatibility alias for elements(); accessibility-first on Windows."""
+    return elements(min_confidence=min_confidence)
 
 
 def find_text(query, exact=False):
@@ -156,9 +173,14 @@ def find_text(query, exact=False):
 def tap_text(query, index=None, exact=False):
     """Find text on screen and tap its center. Raises with what IS visible on
     failure, so the next step is informed."""
-    hits = find_text(query, exact=exact)
+    if not query:
+        raise ValueError("text query must not be empty")
+    visible_boxes = ocr()
+    q = query.lower()
+    hits = [o for o in visible_boxes
+            if (o["text"].lower() == q if exact else q in o["text"].lower())]
     if not hits:
-        visible = [o["text"] for o in ocr()][:30]
+        visible = [o["text"] for o in visible_boxes][:30]
         raise RuntimeError(f"no visible text matches {query!r}; saw: {visible}")
     if index is None and len(hits) != 1:
         raise RuntimeError(
@@ -167,7 +189,10 @@ def tap_text(query, index=None, exact=False):
     if index is None:
         index = 0
     hit = hits[index]
-    tap(hit["x"], hit["y"])
+    if _WINDOWS and hit.get("source") == "accessibility" and len(hits) == 1:
+        mirror.tap_accessibility(hit)
+    else:
+        tap(hit["x"], hit["y"])
     return hit
 
 
@@ -207,12 +232,12 @@ def scroll(amount=300):
 # lazy-loaded content arrive) means the end.
 
 def _content_texts(min_conf=0.4, top_frac=0.06, bottom_frac=0.92):
-    """OCR of the scrollable content area, excluding the volatile status bar
+    """Visible elements in the scrollable area, excluding the volatile status bar
     (clock/battery) at top and the nav/home strip at bottom."""
-    path, win = mirror.capture()
+    win = _win()
     top = win["y"] + win["h"] * top_frac
     bot = win["y"] + win["h"] * bottom_frac
-    return [o for o in _ocr.recognize(path, win)
+    return [o for o in elements(min_confidence=min_conf)
             if top < o["y"] < bot and o["confidence"] >= min_conf]
 
 

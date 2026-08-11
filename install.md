@@ -10,7 +10,7 @@ Use once. For phone work, read `SKILL.md`.
 - Python 3.12 is the verified project interpreter.
 - Apple device support. Install **Apple Devices** and, when needed for the
   usbmux/driver layer, the Microsoft Store version of **iTunes**.
-- `pymobiledevice3` for USB/CoreDevice and HID transport.
+- `pymobiledevice3` for USB/Wi-Fi CoreDevice, RSD and HID/WDA transport.
 - PaddlePaddle CPU + PaddleOCR 3.7 for local PP-OCRv6 OCR.
 
 Verified Python environment:
@@ -33,7 +33,7 @@ the small WDA coordinate-tap and persistent-XCTest-runner extensions required
 by the iOS 26 fallback. The final `pip install -e .` only installs this
 package's own declared platform dependencies (currently Pillow on Windows).
 
-First transport check:
+First USB transport check:
 
 ```bat
 .venv\Scripts\pymobiledevice3.exe usbmux list
@@ -54,12 +54,44 @@ The device can require a physical confirmation/restart when Developer Mode is
 enabled. The agent must stop for that physical step rather than attempting to
 bypass it.
 
-The Windows doctor verifies the dependency stack, usbmux, a connected phone,
+#### Optional Wi-Fi transport
+
+USB remains the safe default. After the phone has already been trusted, paired,
+put in Developer Mode and provisioned with WDA, normal runtime control can use a
+Wi-Fi RemotePairing tunnel instead.
+
+Start pymobiledevice3 `tunneld` from an **elevated** terminal and leave it
+running:
+
+```powershell
+.\.venv\Scripts\python.exe -m pymobiledevice3 remote tunneld --no-usb --no-usbmux
+```
+
+Then choose the transport in the terminal that runs phone-harness:
+
+```powershell
+$env:PHONE_HARNESS_TRANSPORT = "wifi"   # usb | wifi | auto
+# Optional when tunneld exposes more than one phone:
+$env:PHONE_HARNESS_UDID = "YOUR_DEVICE_UDID"
+.\.venv\Scripts\phone-harness.exe --doctor
+```
+
+`auto` prefers USB when the selected phone is attached and otherwise falls back
+to a device exposed by local tunneld. For an explicit `wifi` session, use the
+Wi-Fi-only tunneld command above so its RSD listing cannot resolve back to a USB
+tunnel for the same phone. Initial Trust/Developer Mode/WDA provisioning and
+recovery remain USB-first operations.
+
+The Windows doctor verifies the dependency stack, selected transport, a connected phone,
 CoreDevice display info, the selected remote-input backend, screenshot capture
 and PP-OCRv6 OCR in that order. iOS 27+ uses native CoreDevice Universal HID.
 iOS 26 uses the signed WDA runner described below.
 The first PP-OCRv6 invocation downloads the medium detection/recognition models
 to PaddleX's user cache; later runs reuse the local model files.
+
+Windows screen reading is accessibility-first: WDA labels, values and bounds
+are returned by `elements()` (and the compatibility alias `ocr()`) when
+available. PaddleOCR is used only when WDA does not expose usable text.
 
 ### Windows iOS 26 WDA setup
 

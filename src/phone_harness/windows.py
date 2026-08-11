@@ -13,6 +13,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from PIL import Image
 
@@ -25,22 +27,46 @@ _DEVICE_UDID = None
 _PRODUCT_VERSION = None
 _WDA_RUNNER_BUNDLE = None
 _POINT_SCALE = None
+_DEVICE_TRANSPORT = None
+_DEVICE_RSD = None
 _WDA_BUNDLE_PREFIX = "com.iw.phoneharness.wda"
+_TUNNELD_URL = "http://127.0.0.1:49151"
 
 
 def _clear_device_cache():
-    global _DEVICE_UDID, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _POINT_SCALE
+    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _POINT_SCALE
     _DEVICE_UDID = None
+    _DEVICE_TRANSPORT = None
+    _DEVICE_RSD = None
     _SCREEN_SIZE = None
     _PRODUCT_VERSION = None
     _WDA_RUNNER_BUNDLE = None
     _POINT_SCALE = None
 
 
-def _run_pm3(*args, timeout=90):
+def _transport_mode():
+    mode = os.environ.get("PHONE_HARNESS_TRANSPORT", "usb").strip().lower()
+    if mode not in {"usb", "wifi", "auto"}:
+        raise RuntimeError("PHONE_HARNESS_TRANSPORT must be usb, wifi, or auto")
+    return mode
+
+
+def _configured_udid():
+    return os.environ.get("PHONE_HARNESS_UDID") or os.environ.get("PYMOBILEDEVICE3_UDID")
+
+
+def _transport_cli_args():
+    if _DEVICE_TRANSPORT == "wifi" and _DEVICE_RSD:
+        return ["--rsd", _DEVICE_RSD[0], str(_DEVICE_RSD[1])]
+    return []
+
+
+def _run_pm3(*args, timeout=90, use_transport=True):
     started = time.perf_counter()
     operation = "/".join(map(str, args[:4]))
     cmd = [sys.executable, "-m", "pymobiledevice3", *map(str, args)]
+    if use_transport:
+        cmd.extend(_transport_cli_args())
     env = os.environ.copy()
     if _DEVICE_UDID:
         env["PYMOBILEDEVICE3_UDID"] = _DEVICE_UDID
@@ -68,32 +94,97 @@ def _run_pm3(*args, timeout=90):
     return stdout
 
 
-def _json_pm3(*args, timeout=90):
-    text = _run_pm3(*args, timeout=timeout)
+def _json_pm3(*args, timeout=90, use_transport=True):
+    text = _run_pm3(*args, timeout=timeout, use_transport=use_transport)
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"pymobiledevice3 returned non-JSON output: {text[:500]}") from exc
 
 
+def _usb_device_udids():
+    return _json_pm3("usbmux", "list", "--usb", "--simple", use_transport=False)
+
+
+def _tunneld_wifi_devices(timeout=1.5):
+    try:
+        with urlopen(_TUNNELD_URL, timeout=timeout) as response:
+            data = json.load(response)
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "pymobiledevice3 tunneld is unavailable; start it from an elevated terminal for Wi-Fi transport"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("pymobiledevice3 tunneld returned an unexpected device listing")
+    devices = []
+    for udid, tunnels in data.items():
+        if not isinstance(tunnels, list):
+            continue
+        for tunnel in tunnels:
+            if not isinstance(tunnel, dict):
+                continue
+            address = tunnel.get("tunnel-address")
+            port = tunnel.get("tunnel-port")
+            if isinstance(address, str) and isinstance(port, int):
+                devices.append((udid, (address, port)))
+                break
+    return devices
+
+
+def _discover_devices():
+    mode = _transport_mode()
+    target = _configured_udid()
+
+    if mode in {"usb", "auto"}:
+        try:
+            usb = _usb_device_udids()
+        except RuntimeError:
+            if mode == "usb":
+                raise
+            usb = []
+        if target:
+            usb = [udid for udid in usb if udid == target]
+        if usb or mode == "usb":
+            return [(udid, "usb", None) for udid in usb]
+
+    try:
+        wifi = _tunneld_wifi_devices()
+    except RuntimeError:
+        if mode == "wifi":
+            raise
+        return []
+    if target:
+        wifi = [(udid, rsd) for udid, rsd in wifi if udid == target]
+    return [(udid, "wifi", rsd) for udid, rsd in wifi]
+
+
 def device_udids():
-    """Return USB-connected UDIDs without opening lockdownd sessions."""
-    return _json_pm3("usbmux", "list", "--usb", "--simple")
+    """Return devices visible through the configured USB/Wi-Fi transport."""
+    return [udid for udid, _transport, _rsd in _discover_devices()]
 
 
 def _select_device(devices):
     if not devices:
-        raise RuntimeError("no iPhone is connected through usbmux")
+        raise RuntimeError("no iPhone is available through the configured transport")
     if len(devices) != 1:
         raise RuntimeError(f"expected exactly one iPhone, found {len(devices)}")
     return devices[0]
 
 
 def _require_device():
-    global _DEVICE_UDID
+    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD
     if _DEVICE_UDID is None:
-        _DEVICE_UDID = _select_device(device_udids())
+        devices = _discover_devices()
+        _DEVICE_UDID = _select_device([udid for udid, _transport, _rsd in devices])
+        _DEVICE_TRANSPORT, _DEVICE_RSD = next(
+            (transport, rsd) for udid, transport, rsd in devices if udid == _DEVICE_UDID
+        )
     return _DEVICE_UDID
+
+
+def active_transport():
+    _require_device()
+    return _DEVICE_TRANSPORT
 
 
 def _product_version():
@@ -140,7 +231,10 @@ def _ensure_wda_runner():
     env = os.environ.copy()
     env["PYMOBILEDEVICE3_UDID"] = udid
     subprocess.Popen(
-        [sys.executable, "-m", "pymobiledevice3", "developer", "wda", "run-xctrunner", runner],
+        [
+            sys.executable, "-m", "pymobiledevice3", "developer", "wda", "run-xctrunner", runner,
+            *_transport_cli_args(),
+        ],
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -165,6 +259,14 @@ def _run_wda(*args, timeout=30):
     return _run_pm3("developer", "wda", *args, timeout=timeout)
 
 
+def _json_wda(*args, timeout=30):
+    text = _run_wda(*args, timeout=timeout)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"WDA returned non-JSON output: {text[:500]}") from exc
+
+
 def _display_point_scale(data):
     try:
         displays = data["displays"]
@@ -187,6 +289,76 @@ def _wda_point(x, y):
     x = min(max(float(x), 0.0), float(win["w"]))
     y = min(max(float(y), 0.0), float(win["h"]))
     return round(x / _POINT_SCALE), round(y / _POINT_SCALE)
+
+
+def _wda_rect_to_pixels(rect):
+    global _POINT_SCALE
+    if _POINT_SCALE is None:
+        ensure_window()
+    try:
+        scale = float(_POINT_SCALE)
+        x = float(rect["x"]) * scale
+        y = float(rect["y"]) * scale
+        width = float(rect["width"]) * scale
+        height = float(rect["height"]) * scale
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"invalid WDA element rect: {rect!r}") from exc
+    return x, y, width, height
+
+
+def accessibility_elements():
+    """Return visible WDA accessibility text in screenshot-pixel coordinates."""
+    _require_device()
+    _wda_runner_bundle()
+    items = _json_wda("list-items", "--with-rect")
+    if not isinstance(items, list):
+        raise RuntimeError("WDA returned an unexpected accessibility listing")
+
+    result = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("visible") == "false" or not item.get("rect"):
+            continue
+        try:
+            x, y, width, height = _wda_rect_to_pixels(item["rect"])
+        except RuntimeError:
+            continue
+        label = item.get("label")
+        value = item.get("value")
+        name = item.get("name")
+        texts = []
+        for text in (label, value):
+            if isinstance(text, str) and text.strip() and text not in texts:
+                texts.append(text)
+        if not texts and isinstance(name, str) and name.strip():
+            texts.append(name)
+        for text in texts:
+            result.append({
+                "text": text,
+                "confidence": 1.0,
+                "x": x + width / 2,
+                "y": y + height / 2,
+                "w": width,
+                "h": height,
+                "source": "accessibility",
+                "role": item.get("type"),
+                "name": name,
+                "label": label,
+                "value": value,
+            })
+    return result
+
+
+def tap_accessibility(item):
+    """Tap a uniquely selected WDA accessibility element."""
+    name = item.get("name")
+    label = item.get("label")
+    if isinstance(name, str) and name:
+        _run_wda("tap", name, "--using", "accessibility id")
+        return
+    if isinstance(label, str) and label:
+        _run_wda("tap", label, "--using", "label")
+        return
+    tap(item["x"], item["y"])
 
 
 def connection_state():

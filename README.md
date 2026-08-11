@@ -1,30 +1,31 @@
 # Phone Harness 📱
 
 Connect an LLM directly to your real iPhone with a thin, editable harness.
-No jailbreak and no WebDriverAgent.
+No jailbreak. Windows iOS 26 uses a locally provisioned WebDriverAgent fallback.
 
 The harness now has two host transports:
 
 - **macOS** — iPhone Mirroring + Apple Vision OCR + CGEvents.
-- **Windows** — `pymobiledevice3` CoreDevice + local PaddleOCR PP-OCRv6 +
-  Universal HID.
+- **Windows** — `pymobiledevice3` CoreDevice/WDA + WDA accessibility-first
+  screen reading + local PaddleOCR PP-OCRv6 fallback.
 
-> **Windows development status:** the backend, packaging, local OCR and
-> device-free tests are implemented. Real-device acceptance is still required
-> before the Windows path should be treated as fully verified.
+> **Windows development status:** USB real-device acceptance is verified on iOS
+> 26.6 for capture, accessibility, OCR fallback, tap, drag and typing. Optional
+> Wi-Fi transport is implemented through pymobiledevice3 tunneld; its final
+> disconnected-USB acceptance is tracked separately.
 
 On macOS the iPhone Mirroring window is the transport. On Windows the harness
-talks to the real phone over Apple's USB/CoreDevice services through
-`pymobiledevice3`. In both cases the agent works from screenshots, local OCR and
-tap-ready coordinates; screenshots only need a vision model when OCR cannot
-describe an icon or ambiguous visual state.
+talks to the real phone through `pymobiledevice3` over USB by default or an
+explicit Wi-Fi RSD tunnel. Windows prefers WDA accessibility labels/values and
+bounds, falling back to local OCR only when accessibility cannot describe the
+screen.
 
 ```
   ● agent: wants to open Weather
   │
-  ● ocr() → "Weather" at (400, 468)
+  ● elements() → "Weather" at (400, 468)
   │
-  ● tap(400, 468) → wait_stable() → ocr() confirms the forecast
+  ● tap_text("Weather") → wait_stable() → elements() confirms the forecast
   ✓ done
 ```
 
@@ -40,15 +41,16 @@ Use Python 3.12 and install the Windows prerequisites described in
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -U pip setuptools wheel
-.venv\Scripts\python.exe -m pip install pymobiledevice3==10.7.1
+.venv\Scripts\python.exe -m pip install "git+https://github.com/signal-forge-lab/pymobiledevice3.git@master"
 .venv\Scripts\python.exe -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 .venv\Scripts\python.exe -m pip install paddleocr==3.7.0
 .venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\phone-harness.exe --doctor
 ```
 
-The Windows backend is verified against the `pymobiledevice3` **v10.7.1** tag.
-It deliberately keeps that GPL-3.0-or-later project as an external dependency
+The Windows backend uses the `signal-forge-lab/pymobiledevice3` fork for its
+small WDA coordinate-tap/persistent-runner extensions. It deliberately keeps
+that GPL-3.0-or-later project as an external dependency
 instead of copying or vendoring its source into this MIT repository.
 That process boundary is an engineering boundary, not a legal conclusion;
 review the final GPL distribution obligations before publishing a bundled
@@ -107,12 +109,15 @@ alive instead of restarting it for every action.
 
 That gives an agent the same three primitives on either host:
 
-- **See** — capture the phone and OCR locally. macOS uses Apple Vision; Windows
-  uses PaddleOCR PP-OCRv6 medium. Every visible string has a tap-ready center.
+- **See** — macOS uses Apple Vision OCR. Windows uses WDA accessibility first
+  and PaddleOCR PP-OCRv6 medium only as fallback. Returned elements have
+  tap-ready centers.
 - **Act** — macOS uses CGEvents. Windows uses CoreDevice Universal HID on iOS
   27+ and the provisioned WDA fallback on iOS 26. Screenshot pixels are
   converted to the backend's coordinate system at the transport boundary.
-- **Verify** — screenshot again. No DOM means the capture is the ground truth.
+- **Verify** — query accessibility again and use a fresh screenshot when visual
+  state matters. Accessibility supplies semantics; the capture remains the
+  visual ground truth.
 
 macOS-specific things that do NOT work, learned the hard way: AppleScript `click at` (silently
 ignored — the window is a video stream with no accessibility tree), unicode key
@@ -160,8 +165,8 @@ reaches for it on its own.
   into every script's namespace
 
 There is no phone-harness daemon. macOS window bounds/captures are re-queried
-per call. Windows keeps only the selected USB device and latest capture size in
-the current process; a new `phone-harness` invocation starts fresh.
+per call. Windows keeps only the selected device/transport and latest capture
+metadata in the current process; a new `phone-harness` invocation starts fresh.
 
 ## Development
 
@@ -176,15 +181,15 @@ PY
 ## Limits
 
 - One phone, one active session.
-- Windows capture/OCR targets iOS 17.4+ over USB; earlier iOS 17 releases can
-  require a privileged `tunneld` path.
+- Windows defaults to USB. `PHONE_HARNESS_TRANSPORT=wifi` uses an RSD exposed
+  by a Wi-Fi-only local `tunneld`; `auto` prefers USB then tries tunneld.
 - Native Windows CoreDevice touchscreen and virtual-keyboard input requires iOS
-  27.0+ on the tested/current service. On iOS 26.6 the harness intentionally
-  rejects `tap`/`drag`/scroll/`type_text` instead of reporting a false success.
+  27.0+ on the tested/current service. iOS 26 uses the provisioned persistent
+  WDA fallback for tap/drag/scroll/type.
 - When native CoreDevice typing is available, it currently supports printable
   ASCII only.
 - `app_switcher()` is not part of the Windows MVP; `home()` and `open_app()` are.
 - On macOS, unlocking the physical phone pauses mirroring.
 - No multi-touch (no pinch), no camera/Face ID flows, DRM video renders black.
-- OCR sees text, not semantics — unlabeled icons need a screenshot + a
-  vision-capable model.
+- Accessibility/OCR cannot describe every visual state — unlabeled visual-only
+  content may still need a screenshot + a vision-capable model.

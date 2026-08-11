@@ -27,29 +27,30 @@ def _windows_doctor():
 
     from . import windows
 
+    mode = windows._transport_mode()
     try:
         devices = windows.device_udids()
     except RuntimeError as exc:
         _check(
-            "Apple Mobile Device/usbmux transport",
+            f"Windows phone transport ({mode})",
             False,
-            f"install/repair Apple Devices or Microsoft Store iTunes ({exc})",
+            str(exc),
         )
         return 1
 
-    ok &= _check("Apple Mobile Device/usbmux transport", True)
+    ok &= _check(f"Windows phone transport ({mode})", True)
     if not devices:
         _check(
             "iPhone connected",
             False,
-            "connect and unlock an iPhone over USB, then approve Trust if prompted",
+            "USB: connect/unlock and approve Trust. Wi-Fi: start tunneld and verify RemotePairing reachability",
         )
         return 1
     if len(devices) != 1:
         _check(
             "exactly one iPhone connected",
             False,
-            f"found {len(devices)} devices; disconnect all but the intended phone",
+            f"found {len(devices)} devices; set PHONE_HARNESS_UDID to select the intended phone",
         )
         return 1
     ok &= _check(f"iPhone connected ({len(devices)})", True)
@@ -64,9 +65,11 @@ def _windows_doctor():
         )
         return 1
     ok &= _check(f"display info ({win['w']}x{win['h']})", True)
+    ok &= _check(f"active transport ({windows.active_transport()})", True)
 
     product_version = windows._product_version()
-    if windows._remote_control_supported(product_version):
+    needs_wda = not windows._remote_control_supported(product_version)
+    if not needs_wda:
         ok &= _check(f"CoreDevice touch/typing remote control (iOS {product_version})", True)
     else:
         try:
@@ -79,6 +82,16 @@ def _windows_doctor():
             )
         else:
             ok &= _check(f"WDA touch/typing fallback (iOS {product_version})", True)
+
+    try:
+        accessibility_count = len(windows.accessibility_elements())
+    except RuntimeError as exc:
+        if needs_wda:
+            ok &= _check("WDA accessibility", False, f"OCR fallback remains available ({exc})")
+        else:
+            ok &= _check("screen reading (OCR fallback; WDA accessibility unavailable)", True)
+    else:
+        ok &= _check(f"WDA accessibility ({accessibility_count} text elements)", True)
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         path = f.name
