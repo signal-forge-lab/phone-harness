@@ -87,6 +87,16 @@ class AppResolutionTests(unittest.TestCase):
         apps = [{"bundleIdentifier": "com.example.app", "CFBundleDisplayName": "Example"}]
         self.assertEqual(windows._resolve_app_bundle("com.example.app", apps), "com.example.app")
 
+    def test_resolve_app_bundle_accepts_documented_english_system_aliases_on_localized_device(self):
+        apps = [
+            {"bundleIdentifier": "com.apple.Preferences", "CFBundleDisplayName": "localized-settings"},
+            {"bundleIdentifier": "com.apple.mobilenotes", "CFBundleDisplayName": "localized-notes"},
+            {"bundleIdentifier": "com.apple.weather", "CFBundleDisplayName": "localized-weather"},
+        ]
+        self.assertEqual(windows._resolve_app_bundle("Settings", apps), "com.apple.Preferences")
+        self.assertEqual(windows._resolve_app_bundle("Notes", apps), "com.apple.mobilenotes")
+        self.assertEqual(windows._resolve_app_bundle("Weather", apps), "com.apple.weather")
+
     def test_resolve_app_bundle_rejects_ambiguous_names(self):
         apps = [
             {"bundleIdentifier": "com.example.one", "CFBundleDisplayName": "Example"},

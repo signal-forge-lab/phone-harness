@@ -257,8 +257,18 @@ def press(combo):
     raise ValueError(f"Windows CoreDevice backend does not support key combo {combo!r}")
 
 
+_SYSTEM_APP_ALIASES = {
+    "settings": "com.apple.Preferences",
+    "notes": "com.apple.mobilenotes",
+    "weather": "com.apple.weather",
+}
+
+
 def _resolve_app_bundle(name, apps):
     query = name.casefold()
+    alias = _SYSTEM_APP_ALIASES.get(query)
+    if alias and any(app.get("bundleIdentifier") == alias for app in apps):
+        return alias
     matches = []
     for app in apps:
         bundle = app.get("bundleIdentifier")
