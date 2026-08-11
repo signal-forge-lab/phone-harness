@@ -149,6 +149,16 @@ class StabilityTests(unittest.TestCase):
             Image.new("RGB", (200, 100), "white").save(second)
             self.assertEqual(windows.image_signature(first), windows.image_signature(second))
 
+    def test_image_signatures_close_tolerates_small_live_screen_noise(self):
+        stable = bytes([8] * 4096)
+        noisy = bytearray(stable)
+        for index in range(10):
+            noisy[index] += 1
+        changed = bytes([0] * 4096)
+
+        self.assertTrue(windows.image_signatures_close(stable, bytes(noisy)))
+        self.assertFalse(windows.image_signatures_close(stable, changed))
+
 
 class TransportRobustnessTests(unittest.TestCase):
     def test_run_pm3_normalizes_timeouts(self):

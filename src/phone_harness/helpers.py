@@ -372,7 +372,9 @@ def wait_stable(timeout=6.0, interval=0.5, settle=2):
         path, _ = mirror.capture()
         digest = (mirror.image_signature(path) if _WINDOWS
                   else hashlib.md5(Path(path).read_bytes()).hexdigest())
-        same = same + 1 if digest == prev else 0
+        unchanged = (mirror.image_signatures_close(prev, digest) if _WINDOWS and prev is not None
+                     else digest == prev)
+        same = same + 1 if unchanged else 0
         if same >= settle - 1:
             return True
         prev = digest

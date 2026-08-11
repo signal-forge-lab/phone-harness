@@ -311,3 +311,10 @@ def image_signature(path):
     with Image.open(path) as image:
         data = image.convert("L").resize((64, 64)).tobytes()
     return bytes(value // 16 for value in data)
+
+
+def image_signatures_close(first, second, tolerance=0.01):
+    """Treat tiny live-screen noise as stable without hiding real UI changes."""
+    if len(first) != len(second) or not first:
+        return first == second
+    return sum(abs(a - b) for a, b in zip(first, second)) / len(first) <= tolerance
