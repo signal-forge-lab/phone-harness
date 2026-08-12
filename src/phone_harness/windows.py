@@ -30,6 +30,10 @@ _WDA_READY = False
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
+_PM3_PROCESS_COUNT = 0
+_PM3_LAST_OPERATION = None
+_PM3_LAST_DURATION_MS = None
+_PM3_LAST_RESULT = None
 _WDA_BUNDLE_PREFIX = "com.iw.phoneharness.wda"
 _TUNNELD_URL = "http://127.0.0.1:49151"
 
@@ -69,8 +73,11 @@ def _transport_cli_args():
 
 
 def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
+    global _PM3_PROCESS_COUNT, _PM3_LAST_OPERATION, _PM3_LAST_DURATION_MS, _PM3_LAST_RESULT
     started = time.perf_counter()
-    operation = "/".join(map(str, args[:4]))
+    operation = "/".join(map(str, args[:3]))
+    _PM3_PROCESS_COUNT += 1
+    _PM3_LAST_OPERATION = operation
     cmd = [sys.executable, "-m", "pymobiledevice3", *map(str, args)]
     if use_transport:
         cmd.extend(_transport_cli_args())
@@ -89,15 +96,21 @@ def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
+        _PM3_LAST_DURATION_MS = round((time.perf_counter() - started) * 1000, 3)
+        _PM3_LAST_RESULT = "timeout"
         _clear_device_cache()
         LOG.debug("operation=%s duration=%.3f result=timeout", operation, time.perf_counter() - started)
         raise RuntimeError(f"pymobiledevice3 timed out after {timeout}s: {operation}") from exc
     stdout, stderr = result.stdout.strip(), result.stderr.strip()
     if result.returncode != 0 or " ERROR " in stderr or "Traceback (" in stderr:
+        _PM3_LAST_DURATION_MS = round((time.perf_counter() - started) * 1000, 3)
+        _PM3_LAST_RESULT = "fail"
         _clear_device_cache()
         LOG.debug("operation=%s duration=%.3f result=fail", operation, time.perf_counter() - started)
         detail = stderr or stdout or f"exit {result.returncode}"
         raise RuntimeError(f"pymobiledevice3 failed: {detail}")
+    _PM3_LAST_DURATION_MS = round((time.perf_counter() - started) * 1000, 3)
+    _PM3_LAST_RESULT = "pass"
     LOG.debug("operation=%s duration=%.3f result=pass", operation, time.perf_counter() - started)
     return stdout
 
@@ -193,6 +206,20 @@ def _require_device():
 def active_transport():
     _require_device()
     return _DEVICE_TRANSPORT
+
+
+def runtime_transport_status():
+    """Return process-local transport telemetry without device identifiers."""
+    return {
+        "active_transport": _DEVICE_TRANSPORT,
+        "device_cached": _DEVICE_UDID is not None,
+        "rsd_cached": _DEVICE_RSD is not None,
+        "wda_ready": bool(_WDA_READY),
+        "pm3_process_count": _PM3_PROCESS_COUNT,
+        "last_pm3_operation": _PM3_LAST_OPERATION,
+        "last_pm3_duration_ms": _PM3_LAST_DURATION_MS,
+        "last_pm3_result": _PM3_LAST_RESULT,
+    }
 
 
 def tunneld_status(timeout=0.5):
@@ -301,6 +328,24 @@ def _wda_action_for_accessibility(item):
     return {"op": "tap-coordinate", "x": x, "y": y}
 
 
+def _wda_action_for_tap(x, y):
+    x, y = _wda_point(x, y)
+    return {"op": "tap-coordinate", "x": x, "y": y}
+
+
+def _wda_action_for_drag(x1, y1, x2, y2, duration=0.6):
+    start_x, start_y = _wda_point(x1, y1)
+    end_x, end_y = _wda_point(x2, y2)
+    return {
+        "op": "swipe",
+        "start_x": start_x,
+        "start_y": start_y,
+        "end_x": end_x,
+        "end_y": end_y,
+        "duration": float(duration),
+    }
+
+
 def _wda_action_for_swipe(direction, distance=0.4):
     if direction not in {"up", "down", "left", "right"}:
         raise ValueError(f"unknown direction {direction!r}")
@@ -308,16 +353,17 @@ def _wda_action_for_swipe(direction, distance=0.4):
     cx, cy = win["w"] / 2, win["h"] / 2
     dx = {"left": -1, "right": 1}.get(direction, 0) * win["w"] * float(distance)
     dy = {"up": -1, "down": 1}.get(direction, 0) * win["h"] * float(distance)
-    start_x, start_y = _wda_point(cx - dx / 2, cy - dy / 2)
-    end_x, end_y = _wda_point(cx + dx / 2, cy + dy / 2)
-    return {
-        "op": "swipe",
-        "start_x": start_x,
-        "start_y": start_y,
-        "end_x": end_x,
-        "end_y": end_y,
-        "duration": 0.12,
-    }
+    return _wda_action_for_drag(
+        cx - dx / 2, cy - dy / 2,
+        cx + dx / 2, cy + dy / 2,
+        duration=0.12,
+    )
+
+
+def _wda_action_for_scroll(amount=300):
+    win = ensure_window()
+    cx, cy = win["w"] / 2, win["h"] / 2
+    return _wda_action_for_drag(cx, cy, cx, cy - float(amount), duration=0.35)
 
 
 def wda_runtime_batch_supported():

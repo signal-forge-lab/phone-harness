@@ -172,6 +172,9 @@ the existing WDA runner remains persistent. A dedicated MCP server can host
 this runtime directly instead of introducing a second background process.
 The same interface is intended for direct local Codex/Python execution; see
 [`RUNTIME.md`](RUNTIME.md) for the versioned JSON contract and hosting modes.
+The runtime also atomically publishes privacy-safe operational status for a
+future independent session-monitor process; UI and monitor implementation are
+deliberately separate from the runtime contract.
 
 ## Development
 

@@ -5,9 +5,10 @@ description: "Control the user's real iPhone from macOS or Windows: read the scr
 
 # phone-harness
 
-Direct iPhone control with a screenshot/OCR/action/verification loop. macOS uses
+Direct iPhone control with an observe/action/verification loop. macOS uses
 iPhone Mirroring + Vision OCR + CGEvents. Windows uses `pymobiledevice3`
-CoreDevice + PaddleOCR PP-OCRv6 + Universal HID. For task-specific edits, use
+CoreDevice/WDA + accessibility-first reading + PaddleOCR PP-OCRv6 fallback.
+For task-specific edits, use
 `agent-workspace/agent_helpers.py`. For setup or transport problems, read
 `install.md`.
 
@@ -62,13 +63,15 @@ PY
   and call `tap(x, y)`. On Windows, screenshot pixels are already the public
   tap coordinate space. On macOS, convert image pixels to global screen points
   using the capture/window scale and window origin from `screen_info()`.
-- **Verify after every action**: `wait_stable()` then `ocr()`/`screenshot()`.
-  There is no DOM to assert against; the capture is the ground truth.
+- **Verify after every action**: `wait_stable()` then `elements()`/`screenshot()`.
+  Windows accessibility provides semantic state where available; the capture
+  remains the visual ground truth.
 - Long-lived automation hosts should keep one `PhoneRuntime` instance and use
-  `observe()` → `act([...])` → `observe()`. Batch only controls already known
-  on the same observed screen; split at navigation boundaries. `tap_text`
-  targets are preflighted before the first mutation so an unresolved target
-  cannot partially execute a batch.
+  `screen = observe()` → `act([...], observation_id=screen["observation_id"])`
+  → `observe()`. Batch only controls already known state; split at navigation
+  boundaries. `tap_text` requires the current observation id and all targets
+  are preflighted before the first mutation. `PhoneRuntime` also emits a
+  privacy-safe temporary status JSON for a future independent monitor.
 - Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
   `type_text("...")`, `long_press(x, y)`. `press("return")` and other raw key
   combos are macOS-only in the MVP.
@@ -89,11 +92,13 @@ PY
 - Raw Quartz is a macOS-only escape hatch. Do not reach around the Windows
   backend with ad-hoc destructive `pymobiledevice3` commands.
 
-## OCR-first, vision only as fallback
+## Accessibility/OCR first, vision only as fallback
 
-Do not send every screenshot to a vision model. Normal flow is:
+Do not send every screenshot to a vision model. On Windows the normal flow is:
 
-`screenshot → local OCR → target coordinate → action → local verification`.
+`WDA accessibility → OCR fallback if needed → action → local verification`.
+
+macOS continues to use local Vision OCR as its normal semantic-reading path.
 
 Use a vision-capable model only when OCR cannot identify an icon, the screen is
 visually ambiguous, or OCR and the visible state disagree. Crop to the relevant
@@ -138,9 +143,10 @@ required:
 - **Windows: coordinates come from the latest screenshot.** Capture/OCR before
   coordinate-based input; after a rotation or major display change, do not
   reuse coordinates from an older screenshot.
-- **Windows iOS <27:** CoreDevice media-stream remote control is unavailable on
-  the tested iOS 26.6 device. The harness fails fast instead of silently
-  accepting tap/drag/type commands.
+- **Windows iOS <27:** native CoreDevice remote input is unavailable on the
+  tested iOS 26.6 device, so the installed signed persistent WDA runner is the
+  required tap/drag/scroll/type fallback. If WDA is unavailable, fail rather
+  than pretending the input succeeded.
 - **`type_text` needs an iOS text field focused first** — tap the field, wait
   for the keyboard, then type.
 - **macOS Home-Screen labels are not tap targets.** `tap_text("Weather")` hits

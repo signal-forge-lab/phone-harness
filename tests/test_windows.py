@@ -191,6 +191,28 @@ class DeviceSelectionTests(unittest.TestCase):
             "duration": 0.12,
         })
 
+    def test_wda_raw_actions_normalize_to_logical_coordinates(self):
+        with patch.object(windows, "_wda_point", side_effect=[(10, 20), (30, 40), (50, 60)]):
+            tap = windows._wda_action_for_tap(100, 200)
+            drag = windows._wda_action_for_drag(100, 200, 300, 400, duration=0.5)
+        self.assertEqual(tap, {"op": "tap-coordinate", "x": 10, "y": 20})
+        self.assertEqual(drag, {
+            "op": "swipe",
+            "start_x": 30,
+            "start_y": 40,
+            "end_x": 50,
+            "end_y": 60,
+            "duration": 0.5,
+        })
+
+    def test_wda_scroll_matches_scroll_wheel_direction(self):
+        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}), \
+                patch.object(windows, "_wda_action_for_drag") as drag:
+            drag.return_value = {"op": "swipe"}
+            action = windows._wda_action_for_scroll(300)
+        self.assertEqual(action, {"op": "swipe"})
+        drag.assert_called_once_with(600, 1200, 600, 900, duration=0.35)
+
     def test_tunneld_status_hides_device_identifiers(self):
         with patch.object(windows, "_tunneld_wifi_devices", return_value=[("private-udid", ("fd00::1", 12345))]):
             status = windows.tunneld_status()
@@ -298,6 +320,23 @@ class StabilityTests(unittest.TestCase):
 
 
 class TransportRobustnessTests(unittest.TestCase):
+    def test_runtime_transport_status_is_privacy_safe(self):
+        old_transport = windows._DEVICE_TRANSPORT
+        old_rsd = windows._DEVICE_RSD
+        old_ready = windows._WDA_READY
+        windows._DEVICE_TRANSPORT = "wifi"
+        windows._DEVICE_RSD = ("fd00::private", 12345)
+        windows._WDA_READY = True
+        try:
+            status = windows.runtime_transport_status()
+        finally:
+            windows._DEVICE_TRANSPORT = old_transport
+            windows._DEVICE_RSD = old_rsd
+            windows._WDA_READY = old_ready
+        self.assertEqual(status["active_transport"], "wifi")
+        self.assertTrue(status["wda_ready"])
+        self.assertNotIn("fd00", repr(status))
+
     def test_wda_ready_state_skips_repeated_status_probe(self):
         old_ready = windows._WDA_READY
         windows._WDA_READY = True
@@ -339,6 +378,14 @@ class TransportRobustnessTests(unittest.TestCase):
                 "ok",
             )
         self.assertEqual(run.call_args.kwargs["input"], '[{"op":"tap"}]')
+
+    def test_pm3_telemetry_does_not_record_selector_payload(self):
+        completed = CompletedProcess(["pm3"], 0, stdout="ok", stderr="")
+        with patch("phone_harness.windows.subprocess.run", return_value=completed):
+            windows._run_pm3("developer", "wda", "tap", "PRIVATE SELECTOR")
+        status = windows.runtime_transport_status()
+        self.assertEqual(status["last_pm3_operation"], "developer/wda/tap")
+        self.assertNotIn("PRIVATE SELECTOR", repr(status))
 
     def test_run_pm3_rejects_zero_exit_device_error(self):
         failed = CompletedProcess(
@@ -389,8 +436,12 @@ class TransportRobustnessTests(unittest.TestCase):
     def test_failed_pm3_command_forgets_cached_device(self):
         old_udid = windows._DEVICE_UDID
         old_size = windows._SCREEN_SIZE
+        old_ready = windows._WDA_READY
+        old_rsd = windows._DEVICE_RSD
         windows._DEVICE_UDID = "device-1"
         windows._SCREEN_SIZE = (1179, 2556)
+        windows._WDA_READY = True
+        windows._DEVICE_RSD = ("fd00::1", 12345)
         failed = CompletedProcess(["pm3"], 1, stdout="", stderr="failed")
         try:
             with patch("phone_harness.windows.subprocess.run", return_value=failed):
@@ -398,9 +449,13 @@ class TransportRobustnessTests(unittest.TestCase):
                     windows._run_pm3("developer", "core-device", "get-display-info")
             self.assertIsNone(windows._DEVICE_UDID)
             self.assertIsNone(windows._SCREEN_SIZE)
+            self.assertFalse(windows._WDA_READY)
+            self.assertIsNone(windows._DEVICE_RSD)
         finally:
             windows._DEVICE_UDID = old_udid
             windows._SCREEN_SIZE = old_size
+            windows._WDA_READY = old_ready
+            windows._DEVICE_RSD = old_rsd
 
     def test_capture_replaces_existing_output_only_after_fresh_png(self):
         with TemporaryDirectory() as directory:
