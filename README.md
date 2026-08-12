@@ -170,6 +170,8 @@ There is no separate phone-harness daemon. Automation hosts should keep one
 short-lived accessibility observations and PaddleOCR's lazy model cache while
 the existing WDA runner remains persistent. A dedicated MCP server can host
 this runtime directly instead of introducing a second background process.
+The same interface is intended for direct local Codex/Python execution; see
+[`RUNTIME.md`](RUNTIME.md) for the versioned JSON contract and hosting modes.
 
 ## Development
 

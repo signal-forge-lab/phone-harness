@@ -26,6 +26,7 @@ _SCREEN_SIZE = None
 _DEVICE_UDID = None
 _PRODUCT_VERSION = None
 _WDA_RUNNER_BUNDLE = None
+_WDA_READY = False
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
@@ -34,13 +35,14 @@ _TUNNELD_URL = "http://127.0.0.1:49151"
 
 
 def _clear_device_cache():
-    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _POINT_SCALE
+    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _WDA_READY, _POINT_SCALE
     _DEVICE_UDID = None
     _DEVICE_TRANSPORT = None
     _DEVICE_RSD = None
     _SCREEN_SIZE = None
     _PRODUCT_VERSION = None
     _WDA_RUNNER_BUNDLE = None
+    _WDA_READY = False
     _POINT_SCALE = None
 
 
@@ -193,6 +195,15 @@ def active_transport():
     return _DEVICE_TRANSPORT
 
 
+def tunneld_status(timeout=0.5):
+    """Return local tunneld reachability without exposing device identifiers."""
+    try:
+        devices = _tunneld_wifi_devices(timeout=timeout)
+    except RuntimeError as exc:
+        return {"reachable": False, "device_count": 0, "error": str(exc)}
+    return {"reachable": True, "device_count": len(devices)}
+
+
 def _product_version():
     global _PRODUCT_VERSION
     _require_device()
@@ -226,8 +237,12 @@ def _wda_runner_bundle():
 
 
 def _ensure_wda_runner():
+    global _WDA_READY
+    if _WDA_READY:
+        return
     try:
         _run_pm3("developer", "wda", "status", timeout=5)
+        _WDA_READY = True
         return
     except RuntimeError:
         pass
@@ -253,6 +268,7 @@ def _ensure_wda_runner():
     while time.monotonic() < deadline:
         try:
             _run_pm3("developer", "wda", "status", timeout=5)
+            _WDA_READY = True
             return
         except RuntimeError as exc:
             last_error = exc
@@ -272,6 +288,48 @@ def _run_wda_batch(actions, timeout=30):
         timeout=timeout,
         input_text=json.dumps(actions),
     )
+
+
+def _wda_action_for_accessibility(item):
+    name = item.get("name")
+    label = item.get("label")
+    if isinstance(name, str) and name:
+        return {"op": "tap", "selector": name, "using": "accessibility id"}
+    if isinstance(label, str) and label:
+        return {"op": "tap", "selector": label, "using": "label"}
+    x, y = _wda_point(item["x"], item["y"])
+    return {"op": "tap-coordinate", "x": x, "y": y}
+
+
+def _wda_action_for_swipe(direction, distance=0.4):
+    if direction not in {"up", "down", "left", "right"}:
+        raise ValueError(f"unknown direction {direction!r}")
+    win = ensure_window()
+    cx, cy = win["w"] / 2, win["h"] / 2
+    dx = {"left": -1, "right": 1}.get(direction, 0) * win["w"] * float(distance)
+    dy = {"up": -1, "down": 1}.get(direction, 0) * win["h"] * float(distance)
+    start_x, start_y = _wda_point(cx - dx / 2, cy - dy / 2)
+    end_x, end_y = _wda_point(cx + dx / 2, cy + dy / 2)
+    return {
+        "op": "swipe",
+        "start_x": start_x,
+        "start_y": start_y,
+        "end_x": end_x,
+        "end_y": end_y,
+        "duration": 0.12,
+    }
+
+
+def wda_runtime_batch_supported():
+    """True when iOS input must use WDA instead of native CoreDevice HID."""
+    return not _remote_control_supported(_product_version())
+
+
+def run_wda_runtime_batch(actions):
+    """Execute already-normalized WDA actions in one pymobiledevice3 process/session."""
+    if not wda_runtime_batch_supported():
+        raise RuntimeError("WDA runtime batching is only used when native CoreDevice HID is unavailable")
+    return _run_wda_batch(actions)
 
 
 def _json_wda(*args, timeout=30):
@@ -310,6 +368,7 @@ def _wda_rect_to_pixels(rect):
     global _POINT_SCALE
     if _POINT_SCALE is None:
         ensure_window()
+    assert _POINT_SCALE is not None
     try:
         scale = float(_POINT_SCALE)
         x = float(rect["x"]) * scale
@@ -385,17 +444,7 @@ def tap_accessibility_batch(items):
         for item in items:
             tap(item["x"], item["y"])
         return
-    actions = []
-    for item in items:
-        name = item.get("name")
-        label = item.get("label")
-        if isinstance(name, str) and name:
-            actions.append({"op": "tap", "selector": name, "using": "accessibility id"})
-        elif isinstance(label, str) and label:
-            actions.append({"op": "tap", "selector": label, "using": "label"})
-        else:
-            x, y = _wda_point(item["x"], item["y"])
-            actions.append({"op": "tap-coordinate", "x": x, "y": y})
+    actions = [_wda_action_for_accessibility(item) for item in items]
     _run_wda_batch(actions)
 
 

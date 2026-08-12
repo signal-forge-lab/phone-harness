@@ -64,7 +64,7 @@ Start pymobiledevice3 `tunneld` from an **elevated** terminal and leave it
 running:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pymobiledevice3 remote tunneld --no-usb --no-usbmux
+.\.venv\Scripts\python.exe -m pymobiledevice3 remote tunneld --no-usb --no-usbmux --no-mobdev2
 ```
 
 Then choose the transport in the terminal that runs phone-harness:
@@ -81,6 +81,12 @@ to a device exposed by local tunneld. For an explicit `wifi` session, use the
 Wi-Fi-only tunneld command above so its RSD listing cannot resolve back to a USB
 tunnel for the same phone. Initial Trust/Developer Mode/WDA provisioning and
 recovery remain USB-first operations.
+
+Keep this tunneld process alive rather than restarting it per phone operation.
+phone-harness never auto-elevates or starts it implicitly. If the tunnel drops,
+failed device commands clear the cached RSD/device selection; after tunneld
+recovers, the next runtime call re-discovers the phone. This behavior is shared
+by a future dedicated MCP and direct local `PhoneRuntime` use.
 
 The Windows doctor verifies the dependency stack, selected transport, a connected phone,
 CoreDevice display info, the selected remote-input backend, screenshot capture

@@ -9,6 +9,9 @@ import time
 from . import helpers
 
 
+RUNTIME_CONTRACT_VERSION = 1
+
+
 class PhoneRuntime:
     """Small stable interface over observation, batched actions and status."""
 
@@ -19,11 +22,13 @@ class PhoneRuntime:
 
     def status(self):
         state = helpers.connection_state()
-        result = {"connection_state": state}
+        result = {"contract_version": RUNTIME_CONTRACT_VERSION, "connection_state": state}
         if sys.platform == "win32":
             from . import windows
 
             result["transport_mode"] = windows.transport_mode()
+            if result["transport_mode"] in {"wifi", "auto"}:
+                result["tunneld"] = windows.tunneld_status()
             if state == "ready":
                 result["active_transport"] = windows.active_transport()
         return result
@@ -42,6 +47,7 @@ class PhoneRuntime:
             self._observed_at = now
         assert self._observation is not None
         result = copy.deepcopy(self._observation)
+        result["contract_version"] = RUNTIME_CONTRACT_VERSION
         result["cached"] = cached
         return result
 
@@ -154,6 +160,41 @@ class PhoneRuntime:
         workflows at an observe boundary when an action changes to a new screen.
         """
         prepared = self._prepare(actions)
+        if sys.platform == "win32":
+            from . import windows
+
+            wda_batchable = all(
+                op in {"tap_text", "type_text", "swipe"}
+                and (op != "tap_text" or target.get("source") == "accessibility")
+                for op, _action, target in prepared
+            )
+            if prepared and wda_batchable and windows.wda_runtime_batch_supported():
+                wda_actions = []
+                results = []
+                for op, action, target in prepared:
+                    if op == "tap_text":
+                        wda_actions.append(windows._wda_action_for_accessibility(target))
+                        result = {"text": target["text"], "source": "accessibility"}
+                    elif op == "type_text":
+                        wda_actions.append({"op": "type", "text": action["text"]})
+                        result = None
+                    else:
+                        wda_actions.append(
+                            windows._wda_action_for_swipe(
+                                action["direction"],
+                                action.get("distance", 0.4),
+                            )
+                        )
+                        result = None
+                    results.append({"op": op, "result": result})
+                windows.run_wda_runtime_batch(wda_actions)
+                self.invalidate()
+                return {
+                    "contract_version": RUNTIME_CONTRACT_VERSION,
+                    "count": len(results),
+                    "results": results,
+                }
+
         if (
             sys.platform == "win32"
             and prepared
@@ -168,7 +209,11 @@ class PhoneRuntime:
                 for target in targets
             ]
             self.invalidate()
-            return {"count": len(results), "results": results}
+            return {
+                "contract_version": RUNTIME_CONTRACT_VERSION,
+                "count": len(results),
+                "results": results,
+            }
 
         results = []
         for op, action, target in prepared:
@@ -214,4 +259,8 @@ class PhoneRuntime:
                 )
             results.append({"op": op, "result": result})
         self.invalidate()
-        return {"count": len(results), "results": results}
+        return {
+            "contract_version": RUNTIME_CONTRACT_VERSION,
+            "count": len(results),
+            "results": results,
+        }

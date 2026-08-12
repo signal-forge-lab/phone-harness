@@ -178,6 +178,24 @@ class DeviceSelectionTests(unittest.TestCase):
             {"op": "tap", "selector": "two", "using": "accessibility id"},
         ])
 
+    def test_wda_swipe_action_uses_logical_coordinates(self):
+        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}), \
+                patch.object(windows, "_wda_point", side_effect=[(200, 560), (200, 240)]):
+            action = windows._wda_action_for_swipe("up", distance=0.4)
+        self.assertEqual(action, {
+            "op": "swipe",
+            "start_x": 200,
+            "start_y": 560,
+            "end_x": 200,
+            "end_y": 240,
+            "duration": 0.12,
+        })
+
+    def test_tunneld_status_hides_device_identifiers(self):
+        with patch.object(windows, "_tunneld_wifi_devices", return_value=[("private-udid", ("fd00::1", 12345))]):
+            status = windows.tunneld_status()
+        self.assertEqual(status, {"reachable": True, "device_count": 1})
+
 
 class AppResolutionTests(unittest.TestCase):
     def test_normalize_apps_accepts_installation_proxy_mapping(self):
@@ -280,6 +298,16 @@ class StabilityTests(unittest.TestCase):
 
 
 class TransportRobustnessTests(unittest.TestCase):
+    def test_wda_ready_state_skips_repeated_status_probe(self):
+        old_ready = windows._WDA_READY
+        windows._WDA_READY = True
+        try:
+            with patch.object(windows, "_run_pm3") as run:
+                windows._ensure_wda_runner()
+            run.assert_not_called()
+        finally:
+            windows._WDA_READY = old_ready
+
     def test_wifi_pm3_commands_use_tunneld_target(self):
         old_udid = windows._DEVICE_UDID
         old_transport = windows._DEVICE_TRANSPORT
