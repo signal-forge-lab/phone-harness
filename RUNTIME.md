@@ -95,8 +95,13 @@ batch.
 
 On iOS 26, batches made only of accessibility `tap_text`, raw `tap`, `drag`,
 `type_text`, `swipe` and `scroll` are normalized and sent through one
-pymobiledevice3 process and one WDA session. iOS 27+ keeps native CoreDevice HID
-as the preferred input backend.
+pymobiledevice3 process and one WDA session. Before creating that session,
+phone-harness asks WDA which application is currently active and attaches the
+session to that bundle with app relaunch/termination explicitly disabled. This
+preserves the exact screen that produced the `observation_id`; creating a plain
+unattached WDA session can otherwise target the wrong application, while a
+normal bundle session can relaunch/reset the foreground app. iOS 27+ keeps
+native CoreDevice HID as the preferred input backend.
 
 Successful actions report `backend` (`wda_batch`, `native_batch` or
 `sequential`), `duration_ms`, `subprocess_count`, and the consumed observation

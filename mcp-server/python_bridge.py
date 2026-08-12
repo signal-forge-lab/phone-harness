@@ -66,6 +66,10 @@ def _response(request: dict) -> dict:
 
 
 def main() -> None:
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     for raw in sys.stdin:
         try:
             request = json.loads(raw)
@@ -83,7 +87,7 @@ def main() -> None:
                     "phase": "bridge",
                 },
             }
-        sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
+        sys.stdout.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n")
         sys.stdout.flush()
 
 

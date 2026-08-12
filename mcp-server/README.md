@@ -83,3 +83,17 @@ JSONL request multiplexing, OAuth redirect policy, persisted token hashing,
 protected-resource metadata, Origin rejection and a complete DCR + PKCE +
 Bearer-authenticated Modern discovery flow. Real phone actions remain a
 separate hardware acceptance step.
+
+With a trusted, unlocked iPhone connected and Calculator deliberately left in
+the foreground, the two real-device smoke checks are:
+
+```powershell
+$env:PHONE_HARNESS_PYTHON = "C:\path\to\.venv\Scripts\python.exe"
+npm run smoke:device
+npm run smoke:device:http
+```
+
+Both scripts stop before mutation unless Calculator-specific accessibility keys
+are present. The first verifies the Modern handler and long-lived Python bridge;
+the second adds local HTTP, dynamic client registration, PKCE and Bearer auth.
+Neither requests a screenshot or logs general screen contents.

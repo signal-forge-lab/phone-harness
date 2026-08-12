@@ -51,6 +51,34 @@ class CoordinateTests(unittest.TestCase):
         }
         self.assertEqual(windows._display_point_scale(data), 3)
 
+    def test_ensure_window_fetches_point_scale_when_screen_size_is_already_cached(self):
+        old_size, old_scale = windows._SCREEN_SIZE, windows._POINT_SCALE
+        windows._SCREEN_SIZE = (1206, 2622)
+        windows._POINT_SCALE = None
+        display_info = {
+            "displays": [
+                {
+                    "primary": True,
+                    "pointScale": 3,
+                    "currentMode": {"size": [1206.0, 2622.0]},
+                }
+            ]
+        }
+        try:
+            with patch.object(windows, "_require_device"), patch.object(
+                windows, "_json_pm3", return_value=display_info
+            ) as get_display_info:
+                self.assertEqual(
+                    windows.ensure_window(),
+                    {"x": 0, "y": 0, "w": 1206, "h": 2622},
+                )
+            self.assertEqual(windows._POINT_SCALE, 3)
+            get_display_info.assert_called_once_with(
+                "developer", "core-device", "get-display-info", timeout=90
+            )
+        finally:
+            windows._SCREEN_SIZE, windows._POINT_SCALE = old_size, old_scale
+
 
 class DeviceSelectionTests(unittest.TestCase):
     def test_usb_is_default_transport(self):
@@ -97,7 +125,7 @@ class DeviceSelectionTests(unittest.TestCase):
                 patch.object(windows, "_wda_point", return_value=(100, 200)), \
                 patch.object(windows, "_run_wda") as run:
             windows.tap(300, 600)
-        run.assert_called_once_with("tap-coordinate", 100, 200)
+        run.assert_called_once_with("tap-coordinate", 100, 200, "--attach-active-app")
 
     def test_tap_keeps_coredevice_hid_on_ios_27(self):
         with patch.object(windows, "_product_version", return_value="27.0"), \
@@ -114,7 +142,7 @@ class DeviceSelectionTests(unittest.TestCase):
                 patch.object(windows, "_run_wda") as run:
             windows.drag(100, 200, 300, 400, duration=0.7, steps=15)
         run.assert_called_once_with(
-            "swipe", 10, 20, 30, 40, "--duration", 0.7,
+            "swipe", 10, 20, 30, 40, "--duration", 0.7, "--attach-active-app",
         )
 
     def test_wda_point_scales_screenshot_pixels_to_logical_points(self):
@@ -154,7 +182,9 @@ class DeviceSelectionTests(unittest.TestCase):
         with patch.object(windows, "_product_version", return_value="26.6"), \
                 patch.object(windows, "_run_wda") as run:
             windows.tap_accessibility(item)
-        run.assert_called_once_with("tap", "com.example.button", "--using", "accessibility id")
+        run.assert_called_once_with(
+            "tap", "com.example.button", "--using", "accessibility id", "--attach-active-app"
+        )
 
     def test_tap_accessibility_keeps_hid_on_ios_27(self):
         item = {"name": "com.example.button", "label": "Button", "x": 10, "y": 20}
@@ -177,6 +207,15 @@ class DeviceSelectionTests(unittest.TestCase):
             {"op": "tap", "selector": "one", "using": "accessibility id"},
             {"op": "tap", "selector": "two", "using": "accessibility id"},
         ])
+
+    def test_wda_batch_attaches_new_session_to_active_application(self):
+        with patch.object(windows, "_ensure_wda_runner"), \
+                patch.object(windows, "_run_pm3") as run:
+            windows._run_wda_batch([{"op": "tap", "selector": "one"}])
+        self.assertEqual(
+            run.call_args.args[:4],
+            ("developer", "wda", "batch", "--attach-active-app"),
+        )
 
     def test_wda_swipe_action_uses_logical_coordinates(self):
         with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}), \
@@ -245,10 +284,12 @@ class AppResolutionTests(unittest.TestCase):
             {"bundleIdentifier": "com.apple.Preferences", "CFBundleDisplayName": "localized-settings"},
             {"bundleIdentifier": "com.apple.mobilenotes", "CFBundleDisplayName": "localized-notes"},
             {"bundleIdentifier": "com.apple.weather", "CFBundleDisplayName": "localized-weather"},
+            {"bundleIdentifier": "com.apple.calculator", "CFBundleDisplayName": "localized-calculator"},
         ]
         self.assertEqual(windows._resolve_app_bundle("Settings", apps), "com.apple.Preferences")
         self.assertEqual(windows._resolve_app_bundle("Notes", apps), "com.apple.mobilenotes")
         self.assertEqual(windows._resolve_app_bundle("Weather", apps), "com.apple.weather")
+        self.assertEqual(windows._resolve_app_bundle("Calculator", apps), "com.apple.calculator")
 
     def test_resolve_app_bundle_rejects_ambiguous_names(self):
         apps = [
@@ -268,7 +309,12 @@ class AppResolutionTests(unittest.TestCase):
         self.assertEqual(bundle, "com.example.app")
         query.assert_called_once_with("apps", "list")
         run.assert_called_once_with(
-            "developer", "dvt", "launch", "--no-kill-existing", "com.example.app"
+            "developer",
+            "core-device",
+            "launch-application",
+            "--no-kill-existing",
+            "com.example.app",
+            "",
         )
 
 
@@ -289,7 +335,7 @@ class TypingTests(unittest.TestCase):
         with patch.object(windows, "_product_version", return_value="26.6"), \
                 patch.object(windows, "_run_wda") as run:
             windows.type_text("日本語")
-        run.assert_called_once_with("type", "日本語")
+        run.assert_called_once_with("type", "日本語", "--attach-active-app")
 
 
 class GestureSafetyTests(unittest.TestCase):

@@ -311,7 +311,7 @@ def _run_wda(*args, timeout=30):
 def _run_wda_batch(actions, timeout=30):
     _ensure_wda_runner()
     return _run_pm3(
-        "developer", "wda", "batch",
+        "developer", "wda", "batch", "--attach-active-app",
         timeout=timeout,
         input_text=json.dumps(actions),
     )
@@ -476,10 +476,10 @@ def tap_accessibility(item):
     name = item.get("name")
     label = item.get("label")
     if isinstance(name, str) and name:
-        _run_wda("tap", name, "--using", "accessibility id")
+        _run_wda("tap", name, "--using", "accessibility id", "--attach-active-app")
         return
     if isinstance(label, str) and label:
-        _run_wda("tap", label, "--using", "label")
+        _run_wda("tap", label, "--using", "label", "--attach-active-app")
         return
     tap(item["x"], item["y"])
 
@@ -531,7 +531,7 @@ def ensure_window(timeout=90):
     """Return a mirror-compatible screen rectangle backed by CoreDevice info."""
     global _POINT_SCALE
     _require_device()
-    if _SCREEN_SIZE is not None:
+    if _SCREEN_SIZE is not None and _POINT_SCALE is not None:
         width, height = _SCREEN_SIZE
     else:
         data = _json_pm3("developer", "core-device", "get-display-info", timeout=timeout)
@@ -591,7 +591,7 @@ def tap(x, y):
         _run_pm3("developer", "core-device", "universal-hid-service", "tap", hx, hy)
         return
     wx, wy = _wda_point(x, y)
-    _run_wda("tap-coordinate", wx, wy)
+    _run_wda("tap-coordinate", wx, wy, "--attach-active-app")
 
 
 def drag(x1, y1, x2, y2, duration=0.6, steps=30):
@@ -609,7 +609,7 @@ def drag(x1, y1, x2, y2, duration=0.6, steps=30):
     end = _wda_point(x2, y2)
     _run_wda(
         "swipe", start[0], start[1], end[0], end[1],
-        "--duration", duration,
+        "--duration", duration, "--attach-active-app",
     )
 
 
@@ -639,7 +639,7 @@ def type_text(text, delay=0.03):
             raise ValueError("Windows CoreDevice typing currently supports printable ASCII only")
         _run_pm3("developer", "core-device", "universal-hid-service", "type", text)
         return
-    _run_wda("type", text)
+    _run_wda("type", text, "--attach-active-app")
 
 
 def press(combo):
@@ -655,6 +655,7 @@ _SYSTEM_APP_ALIASES = {
     "settings": "com.apple.Preferences",
     "notes": "com.apple.mobilenotes",
     "weather": "com.apple.weather",
+    "calculator": "com.apple.calculator",
 }
 
 
@@ -692,11 +693,18 @@ def open_app(name):
     _require_device()
     apps = _normalize_apps(_json_pm3("apps", "list"))
     bundle = _resolve_app_bundle(name, apps)
-    # CoreDevice's current CLI requires at least one application argument even
-    # when the service call itself accepts none. DVT launch accepts the bundle
-    # identifier alone and reaches the same user-visible result without a dummy
-    # argument.
-    _run_pm3("developer", "dvt", "launch", "--no-kill-existing", bundle)
+    # CoreDevice's service accepts an empty argument list, while the current
+    # CLI requires at least one positional application argument. Passing one
+    # empty string preserves the service semantics and also works for system
+    # apps that DVT launch can reject (for example Calculator on iOS 26).
+    _run_pm3(
+        "developer",
+        "core-device",
+        "launch-application",
+        "--no-kill-existing",
+        bundle,
+        "",
+    )
     return bundle
 
 
