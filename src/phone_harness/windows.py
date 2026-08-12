@@ -51,6 +51,11 @@ def _transport_mode():
     return mode
 
 
+def transport_mode():
+    """Return configured Windows transport mode without touching the device."""
+    return _transport_mode()
+
+
 def _configured_udid():
     return os.environ.get("PHONE_HARNESS_UDID") or os.environ.get("PYMOBILEDEVICE3_UDID")
 
@@ -61,7 +66,7 @@ def _transport_cli_args():
     return []
 
 
-def _run_pm3(*args, timeout=90, use_transport=True):
+def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
     started = time.perf_counter()
     operation = "/".join(map(str, args[:4]))
     cmd = [sys.executable, "-m", "pymobiledevice3", *map(str, args)]
@@ -74,6 +79,7 @@ def _run_pm3(*args, timeout=90, use_transport=True):
         result = subprocess.run(
             cmd,
             env=env,
+            input=input_text,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -259,6 +265,15 @@ def _run_wda(*args, timeout=30):
     return _run_pm3("developer", "wda", *args, timeout=timeout)
 
 
+def _run_wda_batch(actions, timeout=30):
+    _ensure_wda_runner()
+    return _run_pm3(
+        "developer", "wda", "batch",
+        timeout=timeout,
+        input_text=json.dumps(actions),
+    )
+
+
 def _json_wda(*args, timeout=30):
     text = _run_wda(*args, timeout=timeout)
     try:
@@ -350,6 +365,9 @@ def accessibility_elements():
 
 def tap_accessibility(item):
     """Tap a uniquely selected WDA accessibility element."""
+    if _remote_control_supported(_product_version()):
+        tap(item["x"], item["y"])
+        return
     name = item.get("name")
     label = item.get("label")
     if isinstance(name, str) and name:
@@ -359,6 +377,26 @@ def tap_accessibility(item):
         _run_wda("tap", label, "--using", "label")
         return
     tap(item["x"], item["y"])
+
+
+def tap_accessibility_batch(items):
+    """Tap multiple already-resolved accessibility targets in one WDA session."""
+    if _remote_control_supported(_product_version()):
+        for item in items:
+            tap(item["x"], item["y"])
+        return
+    actions = []
+    for item in items:
+        name = item.get("name")
+        label = item.get("label")
+        if isinstance(name, str) and name:
+            actions.append({"op": "tap", "selector": name, "using": "accessibility id"})
+        elif isinstance(label, str) and label:
+            actions.append({"op": "tap", "selector": label, "using": "label"})
+        else:
+            x, y = _wda_point(item["x"], item["y"])
+            actions.append({"op": "tap-coordinate", "x": x, "y": y})
+    _run_wda_batch(actions)
 
 
 def connection_state():

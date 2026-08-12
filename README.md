@@ -49,7 +49,7 @@ py -3.12 -m venv .venv
 ```
 
 The Windows backend uses the `signal-forge-lab/pymobiledevice3` fork for its
-small WDA coordinate-tap/persistent-runner extensions. It deliberately keeps
+small WDA coordinate-tap, persistent-runner and batched-action extensions. It deliberately keeps
 that GPL-3.0-or-later project as an external dependency
 instead of copying or vendoring its source into this MIT repository.
 That process boundary is an engineering boundary, not a legal conclusion;
@@ -159,14 +159,17 @@ reaches for it on its own.
   - `windows.py` — Windows CoreDevice screenshot/input transport
   - `paddle_ocr.py` — PP-OCRv6 local OCR → screenshot-pixel boxes
   - `helpers.py` — the primitives pre-imported into scripts
+  - `runtime.py` — long-lived observe/status/batch-action core for automation hosts
   - `admin.py` — `--doctor`
   - `run.py` — the CLI (`exec` stdin with helpers in scope)
 - `agent-workspace/agent_helpers.py` — helper code the agent edits; auto-loaded
   into every script's namespace
 
-There is no phone-harness daemon. macOS window bounds/captures are re-queried
-per call. Windows keeps only the selected device/transport and latest capture
-metadata in the current process; a new `phone-harness` invocation starts fresh.
+There is no separate phone-harness daemon. Automation hosts should keep one
+`PhoneRuntime` instance alive. That reuses selected device/transport metadata,
+short-lived accessibility observations and PaddleOCR's lazy model cache while
+the existing WDA runner remains persistent. A dedicated MCP server can host
+this runtime directly instead of introducing a second background process.
 
 ## Development
 

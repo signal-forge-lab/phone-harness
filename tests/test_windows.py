@@ -151,9 +151,32 @@ class DeviceSelectionTests(unittest.TestCase):
 
     def test_tap_accessibility_prefers_accessibility_id(self):
         item = {"name": "com.example.button", "label": "Button", "x": 10, "y": 20}
-        with patch.object(windows, "_run_wda") as run:
+        with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_run_wda") as run:
             windows.tap_accessibility(item)
         run.assert_called_once_with("tap", "com.example.button", "--using", "accessibility id")
+
+    def test_tap_accessibility_keeps_hid_on_ios_27(self):
+        item = {"name": "com.example.button", "label": "Button", "x": 10, "y": 20}
+        with patch.object(windows, "_product_version", return_value="27.0"), \
+                patch.object(windows, "tap") as tap, \
+                patch.object(windows, "_run_wda") as run:
+            windows.tap_accessibility(item)
+        tap.assert_called_once_with(10, 20)
+        run.assert_not_called()
+
+    def test_tap_accessibility_batch_uses_one_wda_batch(self):
+        items = [
+            {"text": "1", "name": "one", "label": "1", "x": 10, "y": 20},
+            {"text": "2", "name": "two", "label": "2", "x": 30, "y": 40},
+        ]
+        with patch.object(windows, "_product_version", return_value="26.6"), \
+                patch.object(windows, "_run_wda_batch") as run:
+            windows.tap_accessibility_batch(items)
+        run.assert_called_once_with([
+            {"op": "tap", "selector": "one", "using": "accessibility id"},
+            {"op": "tap", "selector": "two", "using": "accessibility id"},
+        ])
 
 
 class AppResolutionTests(unittest.TestCase):
@@ -279,6 +302,15 @@ class TransportRobustnessTests(unittest.TestCase):
         with patch("phone_harness.windows.subprocess.run", side_effect=TimeoutExpired(["pm3"], 5)):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 windows._run_pm3("usbmux", "list", timeout=5)
+
+    def test_run_pm3_forwards_stdin_payload(self):
+        completed = CompletedProcess(["pm3"], 0, stdout="ok", stderr="")
+        with patch("phone_harness.windows.subprocess.run", return_value=completed) as run:
+            self.assertEqual(
+                windows._run_pm3("developer", "wda", "batch", input_text='[{"op":"tap"}]'),
+                "ok",
+            )
+        self.assertEqual(run.call_args.kwargs["input"], '[{"op":"tap"}]')
 
     def test_run_pm3_rejects_zero_exit_device_error(self):
         failed = CompletedProcess(

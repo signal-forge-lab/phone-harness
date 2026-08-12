@@ -29,7 +29,7 @@ py -3.12 -m venv .venv
 `pymobiledevice3` is installed explicitly and remains an external
 GPL-3.0-or-later dependency; its source is not copied or vendored into this
 repository. The Windows path currently uses the `signal-forge-lab` fork for
-the small WDA coordinate-tap and persistent-XCTest-runner extensions required
+the small WDA coordinate-tap, persistent-XCTest-runner and batched-action extensions required
 by the iOS 26 fallback. The final `pip install -e .` only installs this
 package's own declared platform dependencies (currently Pillow on Windows).
 

@@ -64,6 +64,11 @@ PY
   using the capture/window scale and window origin from `screen_info()`.
 - **Verify after every action**: `wait_stable()` then `ocr()`/`screenshot()`.
   There is no DOM to assert against; the capture is the ground truth.
+- Long-lived automation hosts should keep one `PhoneRuntime` instance and use
+  `observe()` → `act([...])` → `observe()`. Batch only controls already known
+  on the same observed screen; split at navigation boundaries. `tap_text`
+  targets are preflighted before the first mutation so an unresolved target
+  cannot partially execute a batch.
 - Navigation: `home()`, `open_app("Notes")`, `swipe("up")`, `scroll()`,
   `type_text("...")`, `long_press(x, y)`. `press("return")` and other raw key
   combos are macOS-only in the MVP.
