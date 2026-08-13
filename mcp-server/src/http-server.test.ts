@@ -24,7 +24,20 @@ test("HTTP boundary publishes OAuth protected-resource metadata and rejects unau
   assert.equal(metadata.status, 200);
   const body = await metadata.json() as { resource?: string; authorization_servers?: string[] };
   assert.equal(body.resource, "https://phone.example.test:8443/mcp");
-  assert.ok(body.authorization_servers?.includes("https://phone.example.test:8443/"));
+  assert.ok(body.authorization_servers?.includes("https://auth.example.test/phone-auth/"));
+
+  const authMetadata = await fetch(`${fixture.base}/.well-known/oauth-authorization-server`);
+  assert.equal(authMetadata.status, 200);
+  const authBody = await authMetadata.json() as {
+    issuer?: string;
+    authorization_endpoint?: string;
+    token_endpoint?: string;
+    registration_endpoint?: string;
+  };
+  assert.equal(authBody.issuer, "https://auth.example.test/phone-auth/");
+  assert.equal(authBody.authorization_endpoint, "https://auth.example.test/phone-auth/authorize");
+  assert.equal(authBody.token_endpoint, "https://auth.example.test/phone-auth/token");
+  assert.equal(authBody.registration_endpoint, "https://auth.example.test/phone-auth/register");
 
   const denied = await fetch(`${fixture.base}/mcp`, {
     method: "POST",
@@ -55,6 +68,12 @@ test("health endpoint contains no phone or auth state", async (t) => {
   const response = await fetch(`${fixture.base}/healthz`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, name: "phone-harness-mcp" });
+});
+
+test("HTTP boundary trusts only loopback proxies", async (t) => {
+  const fixture = await startFixture();
+  t.after(() => fixture.close());
+  assert.equal(fixture.appSetting("trust proxy"), "loopback");
 });
 
 test("MCP status snapshot records only request identity and never tool arguments", async (t) => {
@@ -174,12 +193,19 @@ test("DCR plus PKCE authorization code flow yields a bearer token accepted by mo
   assert.ok(modernBody.result?.supportedVersions?.includes("2026-07-28"));
 });
 
-async function startFixture(): Promise<{ base: string; stateDirectory: string; close(): Promise<void> }> {
+async function startFixture(): Promise<{
+  base: string;
+  stateDirectory: string;
+  appSetting(name: string): unknown;
+  close(): Promise<void>;
+}> {
   const stateDirectory = mkdtempSync(join(tmpdir(), "phone-harness-mcp-http-"));
   const config: McpConfig = {
     host: "127.0.0.1",
     port: 0,
     publicBaseUrl: "https://phone.example.test:8443/",
+    oauthIssuerUrl: "https://auth.example.test/phone-auth/",
+    oauthResourceUrl: "https://tunnel.example.test/v1/mcp/tunnel-test",
     stateDirectory,
     ownerToken: "0123456789abcdef0123456789abcdef",
     allowedRedirectHosts: ["chatgpt.com"],
@@ -195,6 +221,7 @@ async function startFixture(): Promise<{ base: string; stateDirectory: string; c
   return {
     base: `http://127.0.0.1:${address.port}`,
     stateDirectory,
+    appSetting: (name: string) => app.app.get(name),
     close: async () => {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
       await app.close();

@@ -1,7 +1,7 @@
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { createOAuthMetadata, getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import type { McpConfig } from "./config.js";
 import { SingleUserOAuthProvider } from "./oauth.js";
@@ -11,10 +11,12 @@ import { McpStatusWriter } from "./mcp-status.js";
 
 export function createHttpServer(config: McpConfig, runtime: RuntimeBridge) {
   const publicBase = new URL(config.publicBaseUrl);
+  const oauthIssuer = new URL(config.oauthIssuerUrl ?? config.publicBaseUrl);
   const mcpUrl = new URL("/mcp", publicBase);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
-  const allowedHosts = Array.from(new Set([publicBase.hostname, "127.0.0.1", "localhost"]));
+  const allowedHosts = Array.from(new Set([publicBase.hostname, oauthIssuer.hostname, "127.0.0.1", "localhost"]));
   const app = createMcpExpressApp({ host: config.host, allowedHosts });
+  app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   const status = new McpStatusWriter(config.stateDirectory, config.publicBaseUrl, config.port);
 
@@ -52,15 +54,26 @@ export function createHttpServer(config: McpConfig, runtime: RuntimeBridge) {
     { ownerToken: config.ownerToken, scopes: ["phone"], allowedRedirectHosts: config.allowedRedirectHosts },
     mcpUrl,
     config.stateDirectory,
+    config.oauthResourceUrl ? new URL(config.oauthResourceUrl) : undefined,
   );
-  app.use(mcpAuthRouter({
+  const oauthOptions = {
     provider: oauth,
-    issuerUrl: publicBase,
-    baseUrl: publicBase,
+    issuerUrl: oauthIssuer,
+    baseUrl: oauthIssuer,
     resourceServerUrl,
     scopesSupported: ["phone"],
     resourceName: "phone-harness",
-  }));
+  };
+  const generatedOAuthMetadata = createOAuthMetadata(oauthOptions);
+  const oauthMetadata = {
+    ...generatedOAuthMetadata,
+    authorization_endpoint: new URL("authorize", oauthIssuer).href,
+    token_endpoint: new URL("token", oauthIssuer).href,
+    registration_endpoint: generatedOAuthMetadata.registration_endpoint ? new URL("register", oauthIssuer).href : undefined,
+    revocation_endpoint: generatedOAuthMetadata.revocation_endpoint ? new URL("revoke", oauthIssuer).href : undefined,
+  };
+  app.get("/.well-known/oauth-authorization-server", (_req, res) => res.json(oauthMetadata));
+  app.use(mcpAuthRouter(oauthOptions));
 
   app.get("/healthz", (_req, res) => res.json({ ok: true, name: "phone-harness-mcp" }));
 
@@ -79,7 +92,7 @@ export function createHttpServer(config: McpConfig, runtime: RuntimeBridge) {
       bearerAuth(req, res, (error?: unknown) => error ? reject(error) : resolve());
     });
     if (res.headersSent) return;
-    if (!req.auth?.resource || !checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl })) {
+    if (!req.auth?.resource || !oauth.isAllowedResource(req.auth.resource)) {
       res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null });
       return;
     }

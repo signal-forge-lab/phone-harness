@@ -45,22 +45,28 @@ Only registered-client metadata and token hashes are persisted. The default
 remote OAuth redirect allowlist is `chatgpt.com`; loopback redirects are also
 accepted for local MCP clients.
 
-## Tailscale Funnel
+## Secure MCP Tunnel
 
-Workbridge can remain on its existing Funnel. Expose this MCP on a separate
-Funnel HTTPS port, for example `8443`, while proxying to local port `7677`:
+For ChatGPT Secure MCP Tunnel, keep the MCP transport on loopback and publish
+only the OAuth authorization server on HTTPS. The Tunnel resource URL is an
+exact allowlisted OAuth audience; do not use a broad hostname allowlist.
 
 ```powershell
-tailscale funnel --bg --https=8443 http://127.0.0.1:7677
+$env:PHONE_HARNESS_MCP_PUBLIC_BASE_URL = "http://127.0.0.1:17677/"
+$env:PHONE_HARNESS_MCP_OAUTH_ISSUER_URL = "https://YOUR-TAILSCALE-NAME/phone-auth/"
+$env:PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL = "https://tunnel-service.gateway.unified-0.internal.api.openai.org/v1/mcp/YOUR-TUNNEL-ID"
 ```
 
-Then the MCP URL is:
+Proxy `/phone-auth` to the loopback MCP server. For a path-scoped OAuth issuer,
+also publish RFC 8414 authorization-server metadata at
+`/.well-known/oauth-authorization-server/phone-auth/`. The MCP endpoint itself
+should remain reachable only through the Secure MCP Tunnel.
 
-```text
-https://YOUR-TAILSCALE-NAME:8443/mcp
-```
+## Tailscale Funnel
 
-Check the existing configuration before changing it:
+A legacy whole-MCP Funnel can still be used for direct remote MCP access, but
+it is not required when Secure MCP Tunnel is used. Check the existing
+configuration before changing it:
 
 ```powershell
 tailscale funnel status

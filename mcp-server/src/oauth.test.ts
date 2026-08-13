@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { JsonOAuthStore, isAllowedOAuthRedirectUri } from "./oauth.js";
+import { JsonOAuthStore, isAllowedOAuthRedirectUri, SingleUserOAuthProvider } from "./oauth.js";
 
 test("OAuth redirect policy allows ChatGPT and loopback but rejects insecure remote redirects", () => {
   const allowed = ["chatgpt.com"];
@@ -29,6 +29,23 @@ test("OAuth store persists client metadata and only hashed token keys", () => {
     assert.equal(reopened.getClient(client.client_id)?.client_id, client.client_id);
     assert.equal(reopened.getAccessToken("hash-only")?.clientId, client.client_id);
     assert.equal(reopened.getAccessToken("raw-secret-token"), undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("OAuth resource policy accepts only the configured resource identifiers", () => {
+  const directory = mkdtempSync(join(tmpdir(), "phone-harness-mcp-oauth-resource-"));
+  try {
+    const provider = new SingleUserOAuthProvider(
+      { ownerToken: "0123456789abcdef", scopes: ["phone"], allowedRedirectHosts: ["chatgpt.com"] },
+      new URL("https://phone.example/mcp"),
+      directory,
+      new URL("https://tunnel.example.test/v1/mcp/tunnel-test"),
+    );
+    assert.equal(provider.isAllowedResource(new URL("https://phone.example/mcp")), true);
+    assert.equal(provider.isAllowedResource(new URL("https://tunnel.example.test/v1/mcp/tunnel-test")), true);
+    assert.equal(provider.isAllowedResource(new URL("https://tunnel.example.test/v1/mcp/other")), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

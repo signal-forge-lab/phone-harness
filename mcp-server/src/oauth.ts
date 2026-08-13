@@ -171,6 +171,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     private readonly config: SingleUserOAuthConfig,
     resourceServerUrl: URL,
     stateDirectory: string,
+    private readonly additionalResourceUrl?: URL,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
     this.store = new JsonOAuthStore(stateDirectory);
@@ -180,7 +181,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   }
 
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
-    if (!params.resource || !checkResourceAllowed({ requestedResource: params.resource, configuredResource: this.resourceServerUrl })) {
+    if (!params.resource || !this.isAllowedResource(params.resource)) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
     if (!(params.scopes ?? []).every((scope) => this.config.scopes.includes(scope))) {
@@ -218,7 +219,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   ): Promise<OAuthTokens> {
     const record = this.validCode(client, authorizationCode);
     if (redirectUri && redirectUri !== record.params.redirectUri) throw new InvalidGrantError("redirect_uri mismatch");
-    if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
+    if (resource && !this.isAllowedResource(resource)) {
       throw new InvalidGrantError("Invalid resource");
     }
     this.codes.delete(authorizationCode);
@@ -230,7 +231,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const record = this.store.getRefreshToken(refreshHash);
     const now = Math.floor(Date.now() / 1_000);
     if (!record || record.clientId !== client.client_id || record.expiresAt < now) throw new InvalidGrantError("Invalid refresh token");
-    if (resource && !checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
+    if (resource && !this.isAllowedResource(resource)) {
       throw new InvalidGrantError("Invalid resource");
     }
     const requestedScopes = scopes ?? record.scopes;
@@ -254,6 +255,13 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const hash = hashToken(request.token);
     this.store.deleteAccessToken(hash);
     this.store.deleteRefreshToken(hash);
+  }
+
+  isAllowedResource(resource: URL): boolean {
+    if (checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) return true;
+    return this.additionalResourceUrl
+      ? checkResourceAllowed({ requestedResource: resource, configuredResource: this.additionalResourceUrl })
+      : false;
   }
 
   private validCode(client: OAuthClientInformationFull, code: string): AuthorizationCodeRecord {
