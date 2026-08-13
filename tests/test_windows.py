@@ -4,7 +4,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from subprocess import CompletedProcess, TimeoutExpired
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
@@ -176,6 +176,44 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(result[0]["source"], "accessibility")
         self.assertEqual(result[0]["x"], 375)
         self.assertEqual(result[0]["y"], 690)
+
+    def test_accessibility_elements_restarts_once_for_stale_wda_application(self):
+        old_scale = windows._POINT_SCALE
+        windows._POINT_SCALE = 3
+        stale = RuntimeError(
+            "pymobiledevice3 failed: WDA error (status=404): "
+            "The previously found element \"Application 'local.pid.0'\" is not present "
+            "in the current view anymore. Original error: Application local.pid.0 is not running"
+        )
+        items = [{
+            "type": "XCUIElementTypeButton",
+            "name": "eight",
+            "label": "8",
+            "value": None,
+            "visible": "true",
+            "rect": {"x": "100", "y": "200", "width": "50", "height": "60"},
+        }]
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_wda_runner_bundle", return_value="runner"), \
+                    patch.object(windows, "_json_wda", side_effect=[stale, items]) as json_wda, \
+                    patch.object(windows, "_restart_wda_runner") as restart:
+                result = windows.accessibility_elements()
+        finally:
+            windows._POINT_SCALE = old_scale
+
+        self.assertEqual(result[0]["text"], "8")
+        self.assertEqual(json_wda.call_count, 2)
+        restart.assert_called_once_with()
+
+    def test_accessibility_elements_does_not_restart_for_other_wda_errors(self):
+        with patch.object(windows, "_require_device", return_value="device-1"), \
+                patch.object(windows, "_wda_runner_bundle", return_value="runner"), \
+                patch.object(windows, "_json_wda", side_effect=RuntimeError("WDA timeout")), \
+                patch.object(windows, "_restart_wda_runner") as restart:
+            with self.assertRaisesRegex(RuntimeError, "WDA timeout"):
+                windows.accessibility_elements()
+        restart.assert_not_called()
 
     def test_tap_accessibility_prefers_accessibility_id(self):
         item = {"name": "com.example.button", "label": "Button", "x": 10, "y": 20}
@@ -381,6 +419,7 @@ class TransportRobustnessTests(unittest.TestCase):
             windows._WDA_READY = old_ready
         self.assertEqual(status["active_transport"], "wifi")
         self.assertTrue(status["wda_ready"])
+        self.assertIn("wda_recovery_count", status)
         self.assertNotIn("fd00", repr(status))
 
     def test_wda_ready_state_skips_repeated_status_probe(self):
@@ -440,6 +479,56 @@ class TransportRobustnessTests(unittest.TestCase):
         finally:
             windows._WDA_READY = old_ready
             windows._WDA_RUNNER_PROCESS = old_process
+
+    def test_wda_restart_is_scoped_to_phone_harness_runner_bundle(self):
+        old_ready = windows._WDA_READY
+        old_process = windows._WDA_RUNNER_PROCESS
+        old_recovery_count = windows._WDA_RECOVERY_COUNT
+        process = MagicMock()
+        process.poll.return_value = None
+        windows._WDA_READY = True
+        windows._WDA_RUNNER_PROCESS = process
+        windows._WDA_RECOVERY_COUNT = 0
+        try:
+            with patch.object(windows, "_wda_runner_bundle", return_value="com.iw.phoneharness.wda.Runner"), \
+                    patch.object(windows, "_run_pm3") as run, \
+                    patch.object(windows, "_ensure_wda_runner") as ensure:
+                windows._restart_wda_runner()
+
+            process.terminate.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=5)
+            run.assert_called_once_with(
+                "developer", "dvt", "pkill", "com.iw.phoneharness.wda.Runner", "--bundle", timeout=10
+            )
+            ensure.assert_called_once_with()
+            self.assertIsNone(windows._WDA_RUNNER_PROCESS)
+            self.assertFalse(windows._WDA_READY)
+            self.assertEqual(windows._WDA_RECOVERY_COUNT, 1)
+        finally:
+            windows._WDA_READY = old_ready
+            windows._WDA_RUNNER_PROCESS = old_process
+            windows._WDA_RECOVERY_COUNT = old_recovery_count
+
+    def test_wda_restart_fails_closed_when_orphan_cannot_be_stopped(self):
+        old_ready = windows._WDA_READY
+        old_process = windows._WDA_RUNNER_PROCESS
+        old_recovery_count = windows._WDA_RECOVERY_COUNT
+        windows._WDA_READY = True
+        windows._WDA_RUNNER_PROCESS = None
+        windows._WDA_RECOVERY_COUNT = 0
+        try:
+            with patch.object(windows, "_wda_runner_bundle", return_value="com.iw.phoneharness.wda.Runner"), \
+                    patch.object(windows, "_run_pm3", side_effect=RuntimeError("pkill failed")), \
+                    patch.object(windows, "_ensure_wda_runner") as ensure:
+                with self.assertRaisesRegex(RuntimeError, "pkill failed"):
+                    windows._restart_wda_runner()
+
+            ensure.assert_not_called()
+            self.assertEqual(windows._WDA_RECOVERY_COUNT, 0)
+        finally:
+            windows._WDA_READY = old_ready
+            windows._WDA_RUNNER_PROCESS = old_process
+            windows._WDA_RECOVERY_COUNT = old_recovery_count
 
     def test_wifi_pm3_commands_use_tunneld_target(self):
         old_udid = windows._DEVICE_UDID

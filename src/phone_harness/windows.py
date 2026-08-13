@@ -28,6 +28,7 @@ _PRODUCT_VERSION = None
 _WDA_RUNNER_BUNDLE = None
 _WDA_READY = False
 _WDA_RUNNER_PROCESS = None
+_WDA_RECOVERY_COUNT = 0
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
@@ -216,6 +217,7 @@ def runtime_transport_status():
         "device_cached": _DEVICE_UDID is not None,
         "rsd_cached": _DEVICE_RSD is not None,
         "wda_ready": bool(_WDA_READY),
+        "wda_recovery_count": _WDA_RECOVERY_COUNT,
         "pm3_process_count": _PM3_PROCESS_COUNT,
         "last_pm3_operation": _PM3_LAST_OPERATION,
         "last_pm3_duration_ms": _PM3_LAST_DURATION_MS,
@@ -304,6 +306,50 @@ def _ensure_wda_runner():
             _require_device()
             time.sleep(0.25)
     raise RuntimeError("WDA runner did not become ready within 35 seconds") from last_error
+
+
+def _is_stale_wda_application_error(exc):
+    text = str(exc)
+    return (
+        "previously found element" in text
+        and "Application 'local.pid." in text
+        and "is not running" in text
+    )
+
+
+def _restart_wda_runner():
+    """Restart only the phone-harness WDA runner after a proven stale-app failure."""
+    global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_RECOVERY_COUNT
+
+    runner = _wda_runner_bundle()
+    process = _WDA_RUNNER_PROCESS
+    owned_runner_stopped = False
+    _WDA_READY = False
+    _WDA_RUNNER_PROCESS = None
+
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        owned_runner_stopped = True
+
+    # A runner can outlive the owning Python runtime. Stop only the signed
+    # phone-harness WDA bundle on-device so an orphaned runner cannot keep a
+    # stale Application cache alive across MCP/runtime restarts.
+    try:
+        _run_pm3("developer", "dvt", "pkill", runner, "--bundle", timeout=10)
+    except RuntimeError:
+        # The local runner may already have torn down the device process.
+        # Without an owned runner handle, however, continuing could reuse the
+        # same orphaned stale runner, so fail closed and let OCR take over.
+        if not owned_runner_stopped:
+            raise
+
+    _ensure_wda_runner()
+    _WDA_RECOVERY_COUNT += 1
 
 
 def _run_wda(*args, timeout=30):
@@ -433,7 +479,13 @@ def accessibility_elements():
     """Return visible WDA accessibility text in screenshot-pixel coordinates."""
     _require_device()
     _wda_runner_bundle()
-    items = _json_wda("list-items", "--with-rect")
+    try:
+        items = _json_wda("list-items", "--with-rect")
+    except RuntimeError as exc:
+        if not _is_stale_wda_application_error(exc):
+            raise
+        _restart_wda_runner()
+        items = _json_wda("list-items", "--with-rect")
     if not isinstance(items, list):
         raise RuntimeError("WDA returned an unexpected accessibility listing")
 
