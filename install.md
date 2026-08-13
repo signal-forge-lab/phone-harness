@@ -8,6 +8,8 @@ Use once. For phone work, read `SKILL.md`.
 
 - Windows 11.
 - Python 3.12 is the verified project interpreter.
+- Python 3.14 is used only for the separate Wi-Fi `tunneld` environment on
+  Windows. The normal phone-harness runtime remains on Python 3.12.
 - Apple device support. Install **Apple Devices** and, when needed for the
   usbmux/driver layer, the Microsoft Store version of **iTunes**.
 - `pymobiledevice3` for USB/Wi-Fi CoreDevice, RSD and HID/WDA transport.
@@ -60,11 +62,26 @@ USB remains the safe default. After the phone has already been trusted, paired,
 put in Developer Mode and provisioned with WDA, normal runtime control can use a
 Wi-Fi RemotePairing tunnel instead.
 
+On Windows, keep `tunneld` in a separate Python 3.14 virtual environment. The
+tested setup uses the same pymobiledevice3 source/revision as the normal runtime:
+
+```powershell
+$pymobiledevice3 = "C:\path\to\pymobiledevice3"
+py -3.14 -m venv .venv-tunneld
+.\.venv-tunneld\Scripts\python.exe -m pip install -U pip
+.\.venv-tunneld\Scripts\python.exe -m pip install -e $pymobiledevice3
+```
+
+Python 3.14 is intentional here: the Windows TCP tunnel path uses the stdlib
+TLS-PSK APIs available there. Do not switch the main phone-harness/PaddleOCR
+environment away from its verified Python 3.12 interpreter just for tunneld.
+
 Start pymobiledevice3 `tunneld` from an **elevated** terminal and leave it
 running:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pymobiledevice3 remote tunneld --no-usb --no-usbmux --no-mobdev2
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 remote tunneld `
+  --no-usb --wifi --no-usbmux --no-mobdev2 --protocol tcp
 ```
 
 Then choose the transport in the terminal that runs phone-harness:

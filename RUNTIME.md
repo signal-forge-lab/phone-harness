@@ -158,9 +158,14 @@ Run one Wi-Fi-only tunneld in a dedicated elevated terminal and keep that
 process alive for the automation session:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pymobiledevice3 remote tunneld `
-  --no-usb --no-usbmux --no-mobdev2
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 remote tunneld `
+  --no-usb --wifi --no-usbmux --no-mobdev2 --protocol tcp
 ```
+
+On Windows this dedicated `.venv-tunneld` uses Python 3.14, while the main
+phone-harness runtime remains on the verified Python 3.12 environment. Install
+the same pymobiledevice3 source/revision into both environments so discovery,
+RSD, WDA and tunnel behavior stay aligned.
 
 Then run the MCP, Codex process or local Python process with:
 
