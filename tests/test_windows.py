@@ -393,9 +393,36 @@ class TransportRobustnessTests(unittest.TestCase):
         finally:
             windows._WDA_READY = old_ready
 
+    def test_wda_startup_retains_runner_process_handle(self):
+        old_ready = windows._WDA_READY
+        old_process = getattr(windows, "_WDA_RUNNER_PROCESS", None)
+        windows._WDA_READY = False
+        if hasattr(windows, "_WDA_RUNNER_PROCESS"):
+            windows._WDA_RUNNER_PROCESS = None
+        runner_process = object()
+        try:
+            with patch.object(
+                windows,
+                "_run_pm3",
+                side_effect=[RuntimeError("not ready"), "{}"],
+            ), patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_wda_runner_bundle", return_value="com.example.Runner"), \
+                    patch.object(windows, "_transport_cli_args", return_value=["--rsd", "fd00::1", "12345"]), \
+                    patch("phone_harness.windows.subprocess.Popen", return_value=runner_process), \
+                    patch("phone_harness.windows.time.sleep"):
+                windows._ensure_wda_runner()
+
+            self.assertIs(windows._WDA_RUNNER_PROCESS, runner_process)
+        finally:
+            windows._WDA_READY = old_ready
+            if hasattr(windows, "_WDA_RUNNER_PROCESS"):
+                windows._WDA_RUNNER_PROCESS = old_process
+
     def test_wda_startup_rediscovers_transport_after_failed_ready_probe(self):
         old_ready = windows._WDA_READY
+        old_process = windows._WDA_RUNNER_PROCESS
         windows._WDA_READY = False
+        windows._WDA_RUNNER_PROCESS = None
         try:
             with patch.object(
                 windows,
@@ -412,6 +439,7 @@ class TransportRobustnessTests(unittest.TestCase):
             self.assertTrue(windows._WDA_READY)
         finally:
             windows._WDA_READY = old_ready
+            windows._WDA_RUNNER_PROCESS = old_process
 
     def test_wifi_pm3_commands_use_tunneld_target(self):
         old_udid = windows._DEVICE_UDID

@@ -27,6 +27,7 @@ _DEVICE_UDID = None
 _PRODUCT_VERSION = None
 _WDA_RUNNER_BUNDLE = None
 _WDA_READY = False
+_WDA_RUNNER_PROCESS = None
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
@@ -264,7 +265,7 @@ def _wda_runner_bundle():
 
 
 def _ensure_wda_runner():
-    global _WDA_READY
+    global _WDA_READY, _WDA_RUNNER_PROCESS
     if _WDA_READY:
         return
     try:
@@ -275,20 +276,21 @@ def _ensure_wda_runner():
         pass
 
     udid = _require_device()
-    runner = _wda_runner_bundle()
-    env = os.environ.copy()
-    env["PYMOBILEDEVICE3_UDID"] = udid
-    subprocess.Popen(
-        [
-            sys.executable, "-m", "pymobiledevice3", "developer", "wda", "run-xctrunner", runner,
-            *_transport_cli_args(),
-        ],
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    if _WDA_RUNNER_PROCESS is None or _WDA_RUNNER_PROCESS.poll() is not None:
+        runner = _wda_runner_bundle()
+        env = os.environ.copy()
+        env["PYMOBILEDEVICE3_UDID"] = udid
+        _WDA_RUNNER_PROCESS = subprocess.Popen(
+            [
+                sys.executable, "-m", "pymobiledevice3", "developer", "wda", "run-xctrunner", runner,
+                *_transport_cli_args(),
+            ],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
 
     deadline = time.monotonic() + 35
     last_error = None
