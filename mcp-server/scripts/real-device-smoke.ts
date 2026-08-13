@@ -1,17 +1,12 @@
 import { createPhoneMcpHandler, MODERN_MCP_PROTOCOL_VERSION } from "../src/server.js";
 import { PythonRuntimeBridge } from "../src/runtime-bridge.js";
+import { calculatorClearText, type ElementRecord } from "./smoke-safety.js";
 
 interface ToolResponse {
   result?: {
     structuredContent?: Record<string, unknown>;
     isError?: boolean;
   };
-}
-
-interface ElementRecord {
-  text?: string;
-  name?: string;
-  role?: string;
 }
 
 const runtime = new PythonRuntimeBridge();
@@ -36,9 +31,8 @@ try {
   });
   const observed = structured(observedResponse);
   const elements = Array.isArray(observed.elements) ? observed.elements.filter(isElement) : [];
-  const byName = new Map(elements.filter((item) => item.name).map((item) => [item.name!, item]));
-  const clear = byName.get("Clear") ?? byName.get("AllClear");
-  if (!clear?.text || !byName.has("One") || !byName.has("Equals")) {
+  const clearText = calculatorClearText(elements);
+  if (!clearText) {
     throw new Error("Safety stop: Calculator keypad is not the active observed screen");
   }
   if (!Number.isInteger(observed.observation_id)) {
@@ -49,7 +43,7 @@ try {
     name: "phone_act",
     arguments: {
       observation_id: observed.observation_id,
-      actions: [{ op: "tap_text", text: clear.text, exact: true }],
+      actions: [{ op: "tap_text", text: clearText, exact: true }],
     },
   });
   const action = structured(actionResponse);

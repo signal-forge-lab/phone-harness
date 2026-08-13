@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx src/server.test.ts && tsx src/runtime-bridge.test.ts && tsx src/oauth.test.ts && tsx src/http-server.test.ts",
+    "test": "tsx src/server.test.ts && tsx src/runtime-bridge.test.ts && tsx src/oauth.test.ts && tsx src/http-server.test.ts && tsx scripts/smoke-safety.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:device": "tsx scripts/real-device-smoke.ts",
     "smoke:device:http": "tsx scripts/real-device-http-smoke.ts",

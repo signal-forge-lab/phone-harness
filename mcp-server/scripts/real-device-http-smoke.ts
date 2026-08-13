@@ -7,12 +7,7 @@ import type { Server } from "node:http";
 import { createHttpServer } from "../src/http-server.js";
 import { PythonRuntimeBridge } from "../src/runtime-bridge.js";
 import { MODERN_MCP_PROTOCOL_VERSION } from "../src/server.js";
-
-interface ElementRecord {
-  text?: string;
-  name?: string;
-  role?: string;
-}
+import { calculatorClearText, type ElementRecord } from "./smoke-safety.js";
 
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
@@ -95,16 +90,15 @@ try {
 
   const observed = await tool(tokens.access_token, "phone_observe", { force: true, include_image: false });
   const elements = Array.isArray(observed.elements) ? observed.elements.filter(isElement) : [];
-  const byName = new Map(elements.filter((item) => item.name).map((item) => [item.name!, item]));
-  const clear = byName.get("Clear") ?? byName.get("AllClear");
-  if (!clear?.text || !byName.has("One") || !byName.has("Equals")) {
+  const clearText = calculatorClearText(elements);
+  if (!clearText) {
     throw new Error("Safety stop: Calculator keypad is not the active observed screen");
   }
   if (!Number.isInteger(observed.observation_id)) throw new Error("phone_observe did not return observation_id");
 
   const action = await tool(tokens.access_token, "phone_act", {
     observation_id: observed.observation_id,
-    actions: [{ op: "tap_text", text: clear.text, exact: true }],
+    actions: [{ op: "tap_text", text: clearText, exact: true }],
   });
   const finalObservation = await tool(tokens.access_token, "phone_observe", { force: true, include_image: false });
   const finalElements = Array.isArray(finalObservation.elements)
