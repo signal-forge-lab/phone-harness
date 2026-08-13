@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -70,25 +71,27 @@ def main() -> None:
         sys.stdin.reconfigure(encoding="utf-8")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    for raw in sys.stdin:
-        try:
-            request = json.loads(raw)
-            if not isinstance(request, dict):
-                raise ValueError
-            response = _response(request)
-        except Exception:
-            response = {
-                "id": None,
-                "ok": False,
-                "error": {
-                    "code": "INVALID_BRIDGE_REQUEST",
-                    "message": "Invalid bridge request",
-                    "retryable": False,
-                    "phase": "bridge",
-                },
-            }
-        sys.stdout.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n")
-        sys.stdout.flush()
+    sys.stdout.flush()
+    with os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1) as protocol_stdout:
+        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+        for raw in sys.stdin:
+            try:
+                request = json.loads(raw)
+                if not isinstance(request, dict):
+                    raise ValueError
+                response = _response(request)
+            except Exception:
+                response = {
+                    "id": None,
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_BRIDGE_REQUEST",
+                        "message": "Invalid bridge request",
+                        "retryable": False,
+                        "phase": "bridge",
+                    },
+                }
+            protocol_stdout.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":
