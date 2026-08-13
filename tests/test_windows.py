@@ -393,6 +393,26 @@ class TransportRobustnessTests(unittest.TestCase):
         finally:
             windows._WDA_READY = old_ready
 
+    def test_wda_startup_rediscovers_transport_after_failed_ready_probe(self):
+        old_ready = windows._WDA_READY
+        windows._WDA_READY = False
+        try:
+            with patch.object(
+                windows,
+                "_run_pm3",
+                side_effect=[RuntimeError("not ready"), RuntimeError("still starting"), "{}"],
+            ), patch.object(windows, "_require_device", return_value="device-1") as require_device, \
+                    patch.object(windows, "_wda_runner_bundle", return_value="com.example.Runner"), \
+                    patch.object(windows, "_transport_cli_args", return_value=["--rsd", "fd00::1", "12345"]), \
+                    patch("phone_harness.windows.subprocess.Popen"), \
+                    patch("phone_harness.windows.time.sleep"):
+                windows._ensure_wda_runner()
+
+            self.assertEqual(require_device.call_count, 2)
+            self.assertTrue(windows._WDA_READY)
+        finally:
+            windows._WDA_READY = old_ready
+
     def test_wifi_pm3_commands_use_tunneld_target(self):
         old_udid = windows._DEVICE_UDID
         old_transport = windows._DEVICE_TRANSPORT

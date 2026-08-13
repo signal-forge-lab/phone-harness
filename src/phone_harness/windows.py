@@ -299,6 +299,7 @@ def _ensure_wda_runner():
             return
         except RuntimeError as exc:
             last_error = exc
+            _require_device()
             time.sleep(0.25)
     raise RuntimeError("WDA runner did not become ready within 35 seconds") from last_error
 
