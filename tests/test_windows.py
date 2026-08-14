@@ -515,11 +515,11 @@ class TransportRobustnessTests(unittest.TestCase):
         try:
             with patch.object(windows, "_wda_runner_bundle", return_value="com.iw.phoneharness.wda.Runner"), \
                     patch.object(windows, "_run_pm3") as run, \
+                    patch.object(windows, "_stop_owned_process_tree") as stop_tree, \
                     patch.object(windows, "_ensure_wda_runner") as ensure:
                 windows._restart_wda_runner()
 
-            process.terminate.assert_called_once_with()
-            process.wait.assert_called_once_with(timeout=5)
+            stop_tree.assert_called_once_with(process)
             run.assert_called_once_with(
                 "developer", "dvt", "pkill", "com.iw.phoneharness.wda.Runner", "--bundle", timeout=10
             )
@@ -535,19 +535,47 @@ class TransportRobustnessTests(unittest.TestCase):
     def test_shutdown_runtime_stops_only_owned_wda_runner(self):
         old_ready = windows._WDA_READY
         old_process = windows._WDA_RUNNER_PROCESS
+        old_bundle = windows._WDA_RUNNER_BUNDLE
         process = MagicMock()
         process.poll.return_value = None
         windows._WDA_READY = True
         windows._WDA_RUNNER_PROCESS = process
+        windows._WDA_RUNNER_BUNDLE = "com.iw.phoneharness.wda.Runner"
         try:
-            windows.shutdown_runtime()
-            process.terminate.assert_called_once_with()
-            process.wait.assert_called_once_with(timeout=2)
+            with patch.object(windows, "_run_pm3") as run, patch.object(
+                windows, "_stop_owned_process_tree"
+            ) as stop_tree:
+                windows.shutdown_runtime()
+            run.assert_called_once_with(
+                "developer", "dvt", "pkill", "com.iw.phoneharness.wda.Runner", "--bundle", timeout=3
+            )
+            stop_tree.assert_called_once_with(process, timeout=2)
             self.assertFalse(windows._WDA_READY)
             self.assertIsNone(windows._WDA_RUNNER_PROCESS)
         finally:
             windows._WDA_READY = old_ready
             windows._WDA_RUNNER_PROCESS = old_process
+            windows._WDA_RUNNER_BUNDLE = old_bundle
+
+    def test_stop_owned_process_tree_uses_windows_taskkill_tree(self):
+        process = MagicMock()
+        process.pid = 1234
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        completed = CompletedProcess(["taskkill"], 0, stdout="", stderr="")
+        with patch.object(windows.sys, "platform", "win32"), patch.object(
+            windows.subprocess, "run", return_value=completed
+        ) as run:
+            windows._stop_owned_process_tree(process, timeout=2)
+        run.assert_called_once_with(
+            ["taskkill", "/PID", "1234", "/T"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2,
+        )
+        process.wait.assert_called_once_with(timeout=2)
 
     def test_wda_restart_fails_closed_when_orphan_cannot_be_stopped(self):
         old_ready = windows._WDA_READY

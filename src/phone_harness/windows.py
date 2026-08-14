@@ -317,6 +317,43 @@ def _is_stale_wda_application_error(exc):
     )
 
 
+def _stop_owned_process_tree(process, timeout=5):
+    """Stop a subprocess tree rooted at a process owned by this runtime."""
+    if process is None or process.poll() is not None:
+        return
+    if sys.platform == "win32":
+        command = ["taskkill", "/PID", str(process.pid), "/T"]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        try:
+            process.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        subprocess.run(
+            [*command, "/F"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        process.wait(timeout=timeout)
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=timeout)
+
+
 def _restart_wda_runner():
     """Restart only the phone-harness WDA runner after a proven stale-app failure."""
     global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_RECOVERY_COUNT
@@ -328,12 +365,7 @@ def _restart_wda_runner():
     _WDA_RUNNER_PROCESS = None
 
     if process is not None and process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+        _stop_owned_process_tree(process)
         owned_runner_stopped = True
 
     # A runner can outlive the owning Python runtime. Stop only the signed
@@ -357,16 +389,19 @@ def shutdown_runtime():
     global _WDA_READY, _WDA_RUNNER_PROCESS
 
     process = _WDA_RUNNER_PROCESS
+    runner = _WDA_RUNNER_BUNDLE
     _WDA_READY = False
     _WDA_RUNNER_PROCESS = None
     if process is None or process.poll() is not None:
         return
-    process.terminate()
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
+    if runner:
+        try:
+            _run_pm3("developer", "dvt", "pkill", runner, "--bundle", timeout=3)
+        except RuntimeError:
+            # Runtime shutdown is best-effort. The owned host process tree is
+            # still terminated below so the bridge cannot leave a local orphan.
+            pass
+    _stop_owned_process_tree(process, timeout=2)
 
 
 def _run_wda(*args, timeout=30):
