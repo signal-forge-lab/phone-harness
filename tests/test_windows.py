@@ -209,7 +209,7 @@ class DeviceSelectionTests(unittest.TestCase):
         windows._POINT_SCALE = 3
         stale = RuntimeError(
             "pymobiledevice3 failed: WDA error (status=404): "
-            "The previously found element \"Application 'local.pid.0'\" is not present "
+            "The previously found element \"Application\n'local.pid.0'\" is not present "
             "in the current view anymore. Original error: Application local.pid.0 is not running"
         )
         items = [{
@@ -531,6 +531,23 @@ class TransportRobustnessTests(unittest.TestCase):
             windows._WDA_READY = old_ready
             windows._WDA_RUNNER_PROCESS = old_process
             windows._WDA_RECOVERY_COUNT = old_recovery_count
+
+    def test_shutdown_runtime_stops_only_owned_wda_runner(self):
+        old_ready = windows._WDA_READY
+        old_process = windows._WDA_RUNNER_PROCESS
+        process = MagicMock()
+        process.poll.return_value = None
+        windows._WDA_READY = True
+        windows._WDA_RUNNER_PROCESS = process
+        try:
+            windows.shutdown_runtime()
+            process.terminate.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=2)
+            self.assertFalse(windows._WDA_READY)
+            self.assertIsNone(windows._WDA_RUNNER_PROCESS)
+        finally:
+            windows._WDA_READY = old_ready
+            windows._WDA_RUNNER_PROCESS = old_process
 
     def test_wda_restart_fails_closed_when_orphan_cannot_be_stopped(self):
         old_ready = windows._WDA_READY

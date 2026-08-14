@@ -204,22 +204,42 @@ export class PythonRuntimeBridge implements RuntimeBridge {
   }
 
   private async stopChild(): Promise<void> {
-    this.peer?.close();
+    const peer = this.peer;
     const child = this.child;
     this.peer = undefined;
     this.child = undefined;
     this.rotationPending = false;
-    if (!child || child.exitCode !== null) return;
-    child.kill();
-    await new Promise<void>((resolveClose) => {
-      const timer = setTimeout(() => {
+    if (!child || child.exitCode !== null) {
+      peer?.close();
+      return;
+    }
+
+    // EOF lets python_bridge.py run PhoneRuntime.close(), which tears down any
+    // WDA runner owned by that Python runtime before a successor is spawned.
+    child.stdin.end();
+    if (!(await this.waitForExit(child, 5_000)) && child.exitCode === null) {
+      child.kill();
+      if (!(await this.waitForExit(child, 2_000)) && child.exitCode === null) {
         child.kill("SIGKILL");
-        resolveClose();
-      }, 2_000);
-      child.once("exit", () => {
+      }
+    }
+    peer?.close();
+  }
+
+  private waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+    if (child.exitCode !== null) return Promise.resolve(true);
+    return new Promise<boolean>((resolveExit) => {
+      let done = false;
+      const finish = (exited: boolean): void => {
+        if (done) return;
+        done = true;
         clearTimeout(timer);
-        resolveClose();
-      });
+        child.off("exit", onExit);
+        resolveExit(exited);
+      };
+      const onExit = (): void => finish(true);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      child.once("exit", onExit);
     });
   }
 

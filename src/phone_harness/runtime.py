@@ -84,6 +84,13 @@ class PhoneRuntime:
         self._current_operation = None
         self._counters = {"status": 0, "observe": 0, "act": 0, "errors": 0}
 
+    def close(self):
+        """Release process-owned device helpers before the runtime exits."""
+        if sys.platform == "win32":
+            from . import windows
+
+            windows.shutdown_runtime()
+
     @staticmethod
     def _pm3_process_count():
         if sys.platform != "win32":

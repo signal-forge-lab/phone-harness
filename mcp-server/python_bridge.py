@@ -72,26 +72,30 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     sys.stdout.flush()
-    with os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1) as protocol_stdout:
-        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-        for raw in sys.stdin:
-            try:
-                request = json.loads(raw)
-                if not isinstance(request, dict):
-                    raise ValueError
-                response = _response(request)
-            except Exception:
-                response = {
-                    "id": None,
-                    "ok": False,
-                    "error": {
-                        "code": "INVALID_BRIDGE_REQUEST",
-                        "message": "Invalid bridge request",
-                        "retryable": False,
-                        "phase": "bridge",
-                    },
-                }
-            protocol_stdout.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n")
+    try:
+        with os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1) as protocol_stdout:
+            os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+            for raw in sys.stdin:
+                try:
+                    request = json.loads(raw)
+                    if not isinstance(request, dict):
+                        raise ValueError
+                    response = _response(request)
+                except Exception:
+                    response = {
+                        "id": None,
+                        "ok": False,
+                        "error": {
+                            "code": "INVALID_BRIDGE_REQUEST",
+                            "message": "Invalid bridge request",
+                            "retryable": False,
+                            "phase": "bridge",
+                        },
+                    }
+                protocol_stdout.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n")
+    finally:
+        with contextlib.redirect_stdout(sys.stderr):
+            RUNTIME.close()
 
 
 if __name__ == "__main__":

@@ -29,6 +29,9 @@ class McpPythonBridgeTests(unittest.TestCase):
                         def status(self):
                             os.write(1, b"native stdout noise\\n")
                             return {"connection_state": "ready"}
+
+                        def close(self):
+                            pass
                     """
                 ),
                 encoding="utf-8",

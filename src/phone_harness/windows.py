@@ -309,7 +309,7 @@ def _ensure_wda_runner():
 
 
 def _is_stale_wda_application_error(exc):
-    text = str(exc)
+    text = " ".join(str(exc).split())
     return (
         "previously found element" in text
         and "Application 'local.pid." in text
@@ -350,6 +350,23 @@ def _restart_wda_runner():
 
     _ensure_wda_runner()
     _WDA_RECOVERY_COUNT += 1
+
+
+def shutdown_runtime():
+    """Stop only a WDA runner owned by this Python runtime."""
+    global _WDA_READY, _WDA_RUNNER_PROCESS
+
+    process = _WDA_RUNNER_PROCESS
+    _WDA_READY = False
+    _WDA_RUNNER_PROCESS = None
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
 
 
 def _run_wda(*args, timeout=30):

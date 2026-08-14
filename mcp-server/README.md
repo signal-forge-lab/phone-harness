@@ -20,8 +20,10 @@ so OCR, WDA readiness, transport metadata and observation caches remain warm.
 Before each runtime call the Node bridge checks `python_bridge.py` and
 `src/phone_harness/**/*.py`; when those Python sources change, it rotates the
 Python child only after all in-flight calls finish. OAuth, the MCP listener and
-the Secure MCP Tunnel stay up while the Python runtime reloads. There is no
-additional phone-harness daemon.
+the Secure MCP Tunnel stay up while the Python runtime reloads. Rotation first
+closes the Python bridge input so the runtime can stop any WDA runner it owns;
+forced process termination is only a bounded fallback. There is no additional
+phone-harness daemon.
 
 Additional Python source roots can be included in the revision check with
 `PHONE_HARNESS_MCP_RUNTIME_WATCH_PATHS`, using the platform path delimiter
