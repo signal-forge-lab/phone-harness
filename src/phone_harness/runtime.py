@@ -484,11 +484,14 @@ class PhoneRuntime:
                         )
                         result = None
                     else:
-                        wda_actions.append(windows._wda_action_for_scroll(action.get("amount", 300)))
+                        scroll_action = windows._wda_action_for_scroll(action.get("amount", 300))
+                        if scroll_action is not None:
+                            wda_actions.append(scroll_action)
                         result = None
                     results.append({"op": op, "result": result})
                 try:
-                    windows.run_wda_runtime_batch(wda_actions)
+                    if wda_actions:
+                        windows.run_wda_runtime_batch(wda_actions)
                 except Exception as exc:
                     error = self._action_error(
                         started,

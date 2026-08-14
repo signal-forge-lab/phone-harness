@@ -79,6 +79,33 @@ class CoordinateTests(unittest.TestCase):
         finally:
             windows._SCREEN_SIZE, windows._POINT_SCALE = old_size, old_scale
 
+    def test_ensure_window_caches_display_info_for_repeated_coordinate_conversion(self):
+        old_size, old_scale = windows._SCREEN_SIZE, windows._POINT_SCALE
+        windows._SCREEN_SIZE = None
+        windows._POINT_SCALE = None
+        display_info = {
+            "displays": [
+                {
+                    "primary": True,
+                    "pointScale": 3,
+                    "currentMode": {"size": [1206.0, 2622.0]},
+                }
+            ]
+        }
+        try:
+            with patch.object(windows, "_require_device"), patch.object(
+                windows, "_json_pm3", return_value=display_info
+            ) as get_display_info:
+                self.assertEqual(windows.ensure_window()["w"], 1206)
+                self.assertEqual(windows.ensure_window()["w"], 1206)
+            get_display_info.assert_called_once_with(
+                "developer", "core-device", "get-display-info", timeout=90
+            )
+            self.assertEqual(windows._SCREEN_SIZE, (1206, 2622))
+            self.assertEqual(windows._POINT_SCALE, 3)
+        finally:
+            windows._SCREEN_SIZE, windows._POINT_SCALE = old_size, old_scale
+
 
 class DeviceSelectionTests(unittest.TestCase):
     def test_usb_is_default_transport(self):
@@ -251,22 +278,13 @@ class DeviceSelectionTests(unittest.TestCase):
                 patch.object(windows, "_run_pm3") as run:
             windows._run_wda_batch([{"op": "tap", "selector": "one"}])
         self.assertEqual(
-            run.call_args.args[:4],
-            ("developer", "wda", "batch", "--attach-active-app"),
+            run.call_args.args[:6],
+            ("developer", "wda", "batch", "--attach-active-app", "--wait-for-idle-timeout", 0),
         )
 
-    def test_wda_swipe_action_uses_logical_coordinates(self):
-        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}), \
-                patch.object(windows, "_wda_point", side_effect=[(200, 560), (200, 240)]):
-            action = windows._wda_action_for_swipe("up", distance=0.4)
-        self.assertEqual(action, {
-            "op": "swipe",
-            "start_x": 200,
-            "start_y": 560,
-            "end_x": 200,
-            "end_y": 240,
-            "duration": 0.12,
-        })
+    def test_wda_swipe_action_uses_native_direction(self):
+        action = windows._wda_action_for_swipe("up", distance=0.4)
+        self.assertEqual(action, {"op": "swipe-direction", "direction": "up"})
 
     def test_wda_raw_actions_normalize_to_logical_coordinates(self):
         with patch.object(windows, "_wda_point", side_effect=[(10, 20), (30, 40), (50, 60)]):
@@ -283,12 +301,17 @@ class DeviceSelectionTests(unittest.TestCase):
         })
 
     def test_wda_scroll_matches_scroll_wheel_direction(self):
-        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}), \
-                patch.object(windows, "_wda_action_for_drag") as drag:
-            drag.return_value = {"op": "swipe"}
+        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}):
             action = windows._wda_action_for_scroll(300)
-        self.assertEqual(action, {"op": "swipe"})
-        drag.assert_called_once_with(600, 1200, 600, 900, duration=0.35)
+        self.assertEqual(action, {
+            "op": "scroll-direction",
+            "direction": "down",
+            "distance": 0.125,
+        })
+
+    def test_wda_scroll_zero_is_a_noop(self):
+        with patch.object(windows, "ensure_window", return_value={"x": 0, "y": 0, "w": 1200, "h": 2400}):
+            self.assertIsNone(windows._wda_action_for_scroll(0))
 
     def test_tunneld_status_hides_device_identifiers(self):
         with patch.object(windows, "_tunneld_wifi_devices", return_value=[("private-udid", ("fd00::1", 12345))]):

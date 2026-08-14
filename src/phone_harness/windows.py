@@ -360,7 +360,7 @@ def _run_wda(*args, timeout=30):
 def _run_wda_batch(actions, timeout=30):
     _ensure_wda_runner()
     return _run_pm3(
-        "developer", "wda", "batch", "--attach-active-app",
+        "developer", "wda", "batch", "--attach-active-app", "--wait-for-idle-timeout", 0,
         timeout=timeout,
         input_text=json.dumps(actions),
     )
@@ -398,21 +398,22 @@ def _wda_action_for_drag(x1, y1, x2, y2, duration=0.6):
 def _wda_action_for_swipe(direction, distance=0.4):
     if direction not in {"up", "down", "left", "right"}:
         raise ValueError(f"unknown direction {direction!r}")
-    win = ensure_window()
-    cx, cy = win["w"] / 2, win["h"] / 2
-    dx = {"left": -1, "right": 1}.get(direction, 0) * win["w"] * float(distance)
-    dy = {"up": -1, "down": 1}.get(direction, 0) * win["h"] * float(distance)
-    return _wda_action_for_drag(
-        cx - dx / 2, cy - dy / 2,
-        cx + dx / 2, cy + dy / 2,
-        duration=0.12,
-    )
+    # WDA's native swipe is intentionally directional rather than coordinate based.
+    # It avoids turning a page swipe into the press-and-hold gesture used by drag.
+    return {"op": "swipe-direction", "direction": direction}
 
 
 def _wda_action_for_scroll(amount=300):
     win = ensure_window()
-    cx, cy = win["w"] / 2, win["h"] / 2
-    return _wda_action_for_drag(cx, cy, cx, cy - float(amount), duration=0.35)
+    amount = float(amount)
+    if amount == 0:
+        return None
+    distance = min(abs(amount) / float(win["h"]), 1.0)
+    return {
+        "op": "scroll-direction",
+        "direction": "down" if amount > 0 else "up",
+        "distance": distance,
+    }
 
 
 def wda_runtime_batch_supported():
@@ -584,13 +585,14 @@ def _display_size(data):
 
 def ensure_window(timeout=90):
     """Return a mirror-compatible screen rectangle backed by CoreDevice info."""
-    global _POINT_SCALE
+    global _SCREEN_SIZE, _POINT_SCALE
     _require_device()
     if _SCREEN_SIZE is not None and _POINT_SCALE is not None:
         width, height = _SCREEN_SIZE
     else:
         data = _json_pm3("developer", "core-device", "get-display-info", timeout=timeout)
         width, height = _display_size(data)
+        _SCREEN_SIZE = (width, height)
         _POINT_SCALE = _display_point_scale(data)
     return {"x": 0, "y": 0, "w": width, "h": height}
 
