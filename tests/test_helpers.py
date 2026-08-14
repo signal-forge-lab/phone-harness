@@ -84,6 +84,17 @@ class ScrollDetectionTests(unittest.TestCase):
         self.assertEqual(helpers._overlap(frozenset({"Settings"}), frozenset()), 0.0)
 
 
+class AppLaunchTests(unittest.TestCase):
+    def test_windows_open_app_defers_readiness_to_next_observation(self):
+        with patch.object(helpers, "_WINDOWS", True), \
+                patch.object(helpers.mirror, "open_app", create=True) as open_app, \
+                patch.object(helpers, "wait_stable") as wait_stable:
+            helpers.open_app("Calculator")
+
+        open_app.assert_called_once_with("Calculator")
+        wait_stable.assert_not_called()
+
+
 class AgentHelperCompatibilityTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32", "Windows coordinate safety")
     def test_tap_icon_is_disabled_until_windows_offset_is_calibrated(self):

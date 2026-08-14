@@ -383,10 +383,13 @@ def app_switcher():
 
 
 def open_app(name):
-    """Open an installed app by name and wait for the resulting screen to settle."""
+    """Open an installed app by name.
+
+    On Windows the caller should use a fresh observation as the readiness
+    boundary instead of paying for a second screenshot-based stability check.
+    """
     if _WINDOWS:
         mirror.open_app(name)
-        wait_stable()
         return
     press("cmd+3")
     time.sleep(0.9)
