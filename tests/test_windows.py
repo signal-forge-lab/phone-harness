@@ -362,10 +362,16 @@ class AppResolutionTests(unittest.TestCase):
 
     def test_open_app_does_not_kill_existing_process(self):
         apps = {"com.example.app": {"CFBundleDisplayName": "Example"}}
-        with patch.object(windows, "_require_device", return_value="device-1"), \
-                patch.object(windows, "_json_pm3", return_value=apps) as query, \
-                patch.object(windows, "_run_pm3") as run:
-            bundle = windows.open_app("Example")
+        old_cache = dict(windows._APP_BUNDLE_CACHE)
+        windows._APP_BUNDLE_CACHE.clear()
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_json_pm3", return_value=apps) as query, \
+                    patch.object(windows, "_run_pm3") as run:
+                bundle = windows.open_app("Example")
+        finally:
+            windows._APP_BUNDLE_CACHE.clear()
+            windows._APP_BUNDLE_CACHE.update(old_cache)
 
         self.assertEqual(bundle, "com.example.app")
         query.assert_called_once_with("apps", "list")
@@ -377,6 +383,41 @@ class AppResolutionTests(unittest.TestCase):
             "com.example.app",
             "",
         )
+
+    def test_open_app_reuses_process_local_bundle_resolution(self):
+        apps = {"com.example.app": {"CFBundleDisplayName": "Example"}}
+        old_cache = dict(windows._APP_BUNDLE_CACHE)
+        windows._APP_BUNDLE_CACHE.clear()
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_json_pm3", return_value=apps) as query, \
+                    patch.object(windows, "_run_pm3") as run:
+                windows.open_app("Example")
+                windows.open_app("example")
+        finally:
+            windows._APP_BUNDLE_CACHE.clear()
+            windows._APP_BUNDLE_CACHE.update(old_cache)
+
+        query.assert_called_once_with("apps", "list")
+        self.assertEqual(run.call_count, 2)
+
+    def test_open_app_invalidates_cached_bundle_after_launch_failure(self):
+        old_cache = dict(windows._APP_BUNDLE_CACHE)
+        windows._APP_BUNDLE_CACHE.clear()
+        windows._APP_BUNDLE_CACHE["example"] = "com.example.app"
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_json_pm3") as query, \
+                    patch.object(windows, "_run_pm3", side_effect=RuntimeError("launch failed")):
+                with self.assertRaisesRegex(RuntimeError, "launch failed"):
+                    windows.open_app("Example")
+        finally:
+            cached_after_failure = windows._APP_BUNDLE_CACHE.get("example")
+            windows._APP_BUNDLE_CACHE.clear()
+            windows._APP_BUNDLE_CACHE.update(old_cache)
+
+        query.assert_not_called()
+        self.assertIsNone(cached_after_failure)
 
 
 class TypingTests(unittest.TestCase):

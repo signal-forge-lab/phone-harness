@@ -32,6 +32,7 @@ _WDA_RECOVERY_COUNT = 0
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
+_APP_BUNDLE_CACHE = {}
 _PM3_PROCESS_COUNT = 0
 _PM3_LAST_OPERATION = None
 _PM3_LAST_DURATION_MS = None
@@ -50,6 +51,7 @@ def _clear_device_cache():
     _WDA_RUNNER_BUNDLE = None
     _WDA_READY = False
     _POINT_SCALE = None
+    _APP_BUNDLE_CACHE.clear()
 
 
 def _transport_mode():
@@ -800,20 +802,28 @@ def _normalize_apps(data):
 
 def open_app(name):
     _require_device()
-    apps = _normalize_apps(_json_pm3("apps", "list"))
-    bundle = _resolve_app_bundle(name, apps)
+    cache_key = name.casefold()
+    bundle = _APP_BUNDLE_CACHE.get(cache_key)
+    if bundle is None:
+        apps = _normalize_apps(_json_pm3("apps", "list"))
+        bundle = _resolve_app_bundle(name, apps)
+        _APP_BUNDLE_CACHE[cache_key] = bundle
     # CoreDevice's service accepts an empty argument list, while the current
     # CLI requires at least one positional application argument. Passing one
     # empty string preserves the service semantics and also works for system
     # apps that DVT launch can reject (for example Calculator on iOS 26).
-    _run_pm3(
-        "developer",
-        "core-device",
-        "launch-application",
-        "--no-kill-existing",
-        bundle,
-        "",
-    )
+    try:
+        _run_pm3(
+            "developer",
+            "core-device",
+            "launch-application",
+            "--no-kill-existing",
+            bundle,
+            "",
+        )
+    except RuntimeError:
+        _APP_BUNDLE_CACHE.pop(cache_key, None)
+        raise
     return bundle
 
 
