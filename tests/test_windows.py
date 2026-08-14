@@ -195,7 +195,7 @@ class DeviceSelectionTests(unittest.TestCase):
         try:
             with patch.object(windows, "_require_device", return_value="device-1"), \
                     patch.object(windows, "_wda_runner_bundle", return_value="runner"), \
-                    patch.object(windows, "_json_wda", return_value=items):
+                    patch.object(windows, "_json_wda", return_value=items) as json_wda:
                 result = windows.accessibility_elements()
         finally:
             windows._POINT_SCALE = old_scale
@@ -203,6 +203,7 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(result[0]["source"], "accessibility")
         self.assertEqual(result[0]["x"], 375)
         self.assertEqual(result[0]["y"], 690)
+        json_wda.assert_called_once_with("list-items", "--with-rect", "--lean-source")
 
     def test_accessibility_elements_restarts_once_for_stale_wda_application(self):
         old_scale = windows._POINT_SCALE

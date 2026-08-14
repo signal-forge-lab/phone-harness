@@ -535,12 +535,12 @@ def accessibility_elements():
     _require_device()
     _wda_runner_bundle()
     try:
-        items = _json_wda("list-items", "--with-rect")
+        items = _json_wda("list-items", "--with-rect", "--lean-source")
     except RuntimeError as exc:
         if not _is_stale_wda_application_error(exc):
             raise
         _restart_wda_runner()
-        items = _json_wda("list-items", "--with-rect")
+        items = _json_wda("list-items", "--with-rect", "--lean-source")
     if not isinstance(items, list):
         raise RuntimeError("WDA returned an unexpected accessibility listing")
 
