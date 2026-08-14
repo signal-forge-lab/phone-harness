@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Readable, Writable } from "node:stream";
 
@@ -31,6 +32,48 @@ interface BridgeResponse {
   ok?: boolean;
   result?: Record<string, unknown>;
   error?: Record<string, unknown>;
+}
+
+type RuntimeProcessFactory = () => ChildProcessWithoutNullStreams;
+
+function collectPythonSourceRevision(path: string, entries: string[]): void {
+  let stat;
+  try {
+    stat = statSync(path);
+  } catch {
+    entries.push(`${path}:missing`);
+    return;
+  }
+  if (stat.isDirectory()) {
+    for (const child of readdirSync(path).sort()) {
+      collectPythonSourceRevision(resolve(path, child), entries);
+    }
+    return;
+  }
+  if (!path.endsWith(".py")) return;
+  entries.push(`${path}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
+}
+
+export function runtimeSourceRevision(paths: readonly string[]): string {
+  const entries: string[] = [];
+  for (const path of paths) collectPythonSourceRevision(path, entries);
+  return entries.join("|");
+}
+
+function defaultRuntimeWatchPaths(): string[] {
+  const sourceDirectory = dirname(fileURLToPath(import.meta.url));
+  const mcpRoot = resolve(sourceDirectory, "..");
+  const repoRoot = resolve(mcpRoot, "..");
+  const configured = (process.env.PHONE_HARNESS_MCP_RUNTIME_WATCH_PATHS ?? "")
+    .split(delimiter)
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .map((path) => resolve(repoRoot, path));
+  return [
+    resolve(mcpRoot, "python_bridge.py"),
+    resolve(repoRoot, "src", "phone_harness"),
+    ...configured,
+  ];
 }
 
 export class JsonLinePeer {
@@ -107,22 +150,65 @@ export class JsonLinePeer {
 export class PythonRuntimeBridge implements RuntimeBridge {
   private child?: ChildProcessWithoutNullStreams;
   private peer?: JsonLinePeer;
+  private sourceRevision?: string;
+  private activeCalls = 0;
+  private rotationPending = false;
+  private lifecycle: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly python = process.env.PHONE_HARNESS_PYTHON || "python",
     private readonly timeoutMs = Number(process.env.PHONE_HARNESS_MCP_RUNTIME_TIMEOUT_MS || 120_000),
+    private readonly watchPaths: readonly string[] = defaultRuntimeWatchPaths(),
+    private readonly processFactory?: RuntimeProcessFactory,
   ) {}
 
-  call(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-    this.ensureChild();
-    return this.peer!.call(method, params);
+  async call(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    let peer!: JsonLinePeer;
+    await this.runLifecycle(async () => {
+      this.refreshSourceRevision();
+      if (this.rotationPending && this.activeCalls === 0) await this.stopChild();
+      this.ensureChild();
+      this.activeCalls += 1;
+      peer = this.peer!;
+    });
+    try {
+      return await peer.call(method, params);
+    } finally {
+      await this.runLifecycle(async () => {
+        this.activeCalls = Math.max(0, this.activeCalls - 1);
+        this.refreshSourceRevision();
+        if (this.rotationPending && this.activeCalls === 0) await this.stopChild();
+      });
+    }
   }
 
   async close(): Promise<void> {
+    await this.runLifecycle(() => this.stopChild());
+  }
+
+  private runLifecycle(operation: () => Promise<void> | void): Promise<void> {
+    const next = this.lifecycle.then(operation, operation);
+    this.lifecycle = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private refreshSourceRevision(): void {
+    const revision = runtimeSourceRevision(this.watchPaths);
+    if (this.sourceRevision === undefined) {
+      this.sourceRevision = revision;
+      return;
+    }
+    if (revision === this.sourceRevision) return;
+    this.sourceRevision = revision;
+    if (this.child) this.rotationPending = true;
+  }
+
+  private async stopChild(): Promise<void> {
     this.peer?.close();
     const child = this.child;
     this.peer = undefined;
     this.child = undefined;
+    this.rotationPending = false;
     if (!child || child.exitCode !== null) return;
     child.kill();
     await new Promise<void>((resolveClose) => {
@@ -139,22 +225,7 @@ export class PythonRuntimeBridge implements RuntimeBridge {
 
   private ensureChild(): void {
     if (this.child && this.peer && this.child.exitCode === null) return;
-    const sourceDirectory = dirname(fileURLToPath(import.meta.url));
-    const mcpRoot = resolve(sourceDirectory, "..");
-    const repoRoot = resolve(mcpRoot, "..");
-    const bridgeScript = resolve(mcpRoot, "python_bridge.py");
-    const pythonPath = resolve(repoRoot, "src");
-    const child = spawn(this.python, ["-u", bridgeScript], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        PYTHONPATH: process.env.PYTHONPATH
-          ? `${pythonPath}${process.platform === "win32" ? ";" : ":"}${process.env.PYTHONPATH}`
-          : pythonPath,
-      },
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = this.processFactory ? this.processFactory() : this.spawnPythonRuntime();
     child.stderr.on("data", () => undefined);
     const peer = new JsonLinePeer(child.stdout, child.stdin, this.timeoutMs);
     child.once("error", () => {
@@ -173,5 +244,24 @@ export class PythonRuntimeBridge implements RuntimeBridge {
     });
     this.child = child;
     this.peer = peer;
+  }
+
+  private spawnPythonRuntime(): ChildProcessWithoutNullStreams {
+    const sourceDirectory = dirname(fileURLToPath(import.meta.url));
+    const mcpRoot = resolve(sourceDirectory, "..");
+    const repoRoot = resolve(mcpRoot, "..");
+    const bridgeScript = resolve(mcpRoot, "python_bridge.py");
+    const pythonPath = resolve(repoRoot, "src");
+    return spawn(this.python, ["-u", bridgeScript], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PYTHONPATH: process.env.PYTHONPATH
+          ? `${pythonPath}${process.platform === "win32" ? ";" : ":"}${process.env.PYTHONPATH}`
+          : pythonPath,
+      },
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   }
 }

@@ -17,7 +17,16 @@ This server is intentionally **Modern-only** and uses MCP protocol
 
 The Node process owns one JSONL Python child. The child owns one `PhoneRuntime`,
 so OCR, WDA readiness, transport metadata and observation caches remain warm.
-There is no additional phone-harness daemon.
+Before each runtime call the Node bridge checks `python_bridge.py` and
+`src/phone_harness/**/*.py`; when those Python sources change, it rotates the
+Python child only after all in-flight calls finish. OAuth, the MCP listener and
+the Secure MCP Tunnel stay up while the Python runtime reloads. There is no
+additional phone-harness daemon.
+
+Additional Python source roots can be included in the revision check with
+`PHONE_HARNESS_MCP_RUNTIME_WATCH_PATHS`, using the platform path delimiter
+(`;` on Windows, `:` on macOS/Linux). This is normally unnecessary because
+`pymobiledevice3` is currently invoked as a fresh subprocess for device calls.
 
 ## Install
 
