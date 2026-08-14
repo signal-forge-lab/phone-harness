@@ -5,6 +5,7 @@ CoreDevice HID coordinates on iOS 27+ or WDA logical screen coordinates on
 older supported devices at the boundary.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from defusedxml import ElementTree as DefusedET
 from PIL import Image
 
 
@@ -33,6 +35,10 @@ _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
 _APP_BUNDLE_CACHE = {}
+_INPROCESS_LOOP = None
+_INPROCESS_RSD_PROVIDER = None
+_INPROCESS_RSD_ENDPOINT = None
+_INPROCESS_WDA_CLIENT = None
 _PM3_PROCESS_COUNT = 0
 _PM3_LAST_OPERATION = None
 _PM3_LAST_DURATION_MS = None
@@ -43,6 +49,7 @@ _TUNNELD_URL = "http://127.0.0.1:49151"
 
 def _clear_device_cache():
     global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _WDA_READY, _POINT_SCALE
+    _close_inprocess_rsd()
     _DEVICE_UDID = None
     _DEVICE_TRANSPORT = None
     _DEVICE_RSD = None
@@ -74,6 +81,184 @@ def _transport_cli_args():
     if _DEVICE_TRANSPORT == "wifi" and _DEVICE_RSD:
         return ["--rsd", _DEVICE_RSD[0], str(_DEVICE_RSD[1])]
     return []
+
+
+def _inprocess_supported():
+    return _DEVICE_TRANSPORT == "wifi" and _DEVICE_RSD is not None
+
+
+def _async_loop():
+    global _INPROCESS_LOOP
+    if _INPROCESS_LOOP is None or _INPROCESS_LOOP.is_closed():
+        _INPROCESS_LOOP = asyncio.new_event_loop()
+    return _INPROCESS_LOOP
+
+
+def _run_async(awaitable, timeout=30):
+    loop = _async_loop()
+    return loop.run_until_complete(asyncio.wait_for(awaitable, timeout=timeout))
+
+
+def _close_inprocess_rsd():
+    global _INPROCESS_RSD_PROVIDER, _INPROCESS_RSD_ENDPOINT, _INPROCESS_WDA_CLIENT
+    provider = _INPROCESS_RSD_PROVIDER
+    _INPROCESS_RSD_PROVIDER = None
+    _INPROCESS_RSD_ENDPOINT = None
+    _INPROCESS_WDA_CLIENT = None
+    if provider is None:
+        return
+    try:
+        _run_async(provider.close(), timeout=3)
+    except Exception:
+        pass
+
+
+def _inprocess_rsd():
+    global _INPROCESS_RSD_PROVIDER, _INPROCESS_RSD_ENDPOINT
+    _require_device()
+    if not _inprocess_supported():
+        return None
+    endpoint = _DEVICE_RSD
+    if _INPROCESS_RSD_PROVIDER is not None and _INPROCESS_RSD_ENDPOINT == endpoint:
+        return _INPROCESS_RSD_PROVIDER
+    _close_inprocess_rsd()
+    from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
+
+    provider = RemoteServiceDiscoveryService(endpoint)
+    try:
+        _run_async(provider.connect(), timeout=10)
+    except Exception as exc:
+        try:
+            _run_async(provider.close(), timeout=2)
+        except Exception:
+            pass
+        raise RuntimeError("pymobiledevice3 in-process RSD connection failed") from exc
+    _INPROCESS_RSD_PROVIDER = provider
+    _INPROCESS_RSD_ENDPOINT = endpoint
+    return provider
+
+
+def _inprocess_wda_client():
+    global _INPROCESS_WDA_CLIENT
+    provider = _inprocess_rsd()
+    if provider is None:
+        return None
+    if _INPROCESS_WDA_CLIENT is None:
+        from pymobiledevice3.services.wda import WdaServiceClient
+
+        _INPROCESS_WDA_CLIENT = WdaServiceClient(provider)
+    return _INPROCESS_WDA_CLIENT
+
+
+def _inprocess_wda_status(timeout=5):
+    client = _inprocess_wda_client()
+    if client is None:
+        return None
+    try:
+        return _run_async(client.get_status(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError("pymobiledevice3 in-process WDA status failed") from exc
+
+
+def _wda_items_from_source(source):
+    root = DefusedET.fromstring(source)
+    items = []
+    for elem in root.iter():
+        attrs = elem.attrib
+        rect = {
+            "x": attrs.get("x"),
+            "y": attrs.get("y"),
+            "width": attrs.get("width"),
+            "height": attrs.get("height"),
+        }
+        if all(value is None for value in rect.values()):
+            rect = None
+        name = attrs.get("name")
+        label = attrs.get("label")
+        value = attrs.get("value")
+        if not (name or label or value or rect):
+            continue
+        items.append({
+            "type": elem.tag,
+            "name": name,
+            "label": label,
+            "value": value,
+            "visible": attrs.get("visible"),
+            "rect": rect,
+        })
+    return items
+
+
+def _inprocess_wda_items(timeout=30):
+    client = _inprocess_wda_client()
+    if client is None:
+        return None
+    try:
+        source = _run_async(
+            client.get_source(
+                excluded_attributes=["accessible", "index", "placeholderValue", "traits", "enabled"]
+            ),
+            timeout=timeout,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"pymobiledevice3 in-process WDA failed: {exc}") from exc
+    return _wda_items_from_source(source)
+
+
+def _inprocess_get_display_info(timeout=30):
+    provider = _inprocess_rsd()
+    if provider is None:
+        return None
+
+    async def task():
+        from pymobiledevice3.remote.core_device.device_info import DeviceInfoService
+
+        async with DeviceInfoService(provider) as service:
+            return await service.get_display_info()
+
+    try:
+        return _run_async(task(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError("pymobiledevice3 in-process display info failed") from exc
+
+
+def _inprocess_list_apps(timeout=30):
+    provider = _inprocess_rsd()
+    if provider is None:
+        return None
+    from pymobiledevice3.services.installation_proxy import InstallationProxyService
+
+    try:
+        return _run_async(
+            InstallationProxyService(lockdown=provider).get_apps(),
+            timeout=timeout,
+        )
+    except Exception as exc:
+        raise RuntimeError("pymobiledevice3 in-process app listing failed") from exc
+
+
+def _inprocess_launch_app(bundle, timeout=30):
+    provider = _inprocess_rsd()
+    if provider is None:
+        return False
+
+    async def task():
+        from pymobiledevice3.remote.core_device.app_service import AppServiceService
+
+        async with AppServiceService(provider) as service:
+            return await service.launch_application(
+                bundle,
+                [""],
+                kill_existing=False,
+                start_suspended=False,
+                environment={},
+            )
+
+    try:
+        _run_async(task(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError("pymobiledevice3 in-process app launch failed") from exc
+    return True
 
 
 def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
@@ -240,7 +425,11 @@ def _product_version():
     global _PRODUCT_VERSION
     _require_device()
     if _PRODUCT_VERSION is None:
-        _PRODUCT_VERSION = str(_json_pm3("lockdown", "get", "--key", "ProductVersion"))
+        provider = _inprocess_rsd() if _inprocess_supported() else None
+        if provider is not None:
+            _PRODUCT_VERSION = str(provider.product_version)
+        else:
+            _PRODUCT_VERSION = str(_json_pm3("lockdown", "get", "--key", "ProductVersion"))
     return _PRODUCT_VERSION
 
 
@@ -254,7 +443,9 @@ def _remote_control_supported(version):
 def _wda_runner_bundle():
     global _WDA_RUNNER_BUNDLE
     if _WDA_RUNNER_BUNDLE is None:
-        apps = _json_pm3("apps", "list")
+        apps = _inprocess_list_apps() if _inprocess_supported() else None
+        if apps is None:
+            apps = _json_pm3("apps", "list")
         candidates = [
             bundle_id for bundle_id in apps
             if bundle_id == _WDA_BUNDLE_PREFIX or bundle_id.startswith(f"{_WDA_BUNDLE_PREFIX}.")
@@ -273,7 +464,10 @@ def _ensure_wda_runner():
     if _WDA_READY:
         return
     try:
-        _run_pm3("developer", "wda", "status", timeout=5)
+        if _inprocess_supported():
+            _inprocess_wda_status(timeout=5)
+        else:
+            _run_pm3("developer", "wda", "status", timeout=5)
         _WDA_READY = True
         return
     except RuntimeError:
@@ -300,7 +494,10 @@ def _ensure_wda_runner():
     last_error = None
     while time.monotonic() < deadline:
         try:
-            _run_pm3("developer", "wda", "status", timeout=5)
+            if _inprocess_supported():
+                _inprocess_wda_status(timeout=5)
+            else:
+                _run_pm3("developer", "wda", "status", timeout=5)
             _WDA_READY = True
             return
         except RuntimeError as exc:
@@ -394,16 +591,16 @@ def shutdown_runtime():
     runner = _WDA_RUNNER_BUNDLE
     _WDA_READY = False
     _WDA_RUNNER_PROCESS = None
-    if process is None or process.poll() is not None:
-        return
-    if runner:
-        try:
-            _run_pm3("developer", "dvt", "pkill", runner, "--bundle", timeout=3)
-        except RuntimeError:
-            # Runtime shutdown is best-effort. The owned host process tree is
-            # still terminated below so the bridge cannot leave a local orphan.
-            pass
-    _stop_owned_process_tree(process, timeout=2)
+    if process is not None and process.poll() is None:
+        if runner:
+            try:
+                _run_pm3("developer", "dvt", "pkill", runner, "--bundle", timeout=3)
+            except RuntimeError:
+                # Runtime shutdown is best-effort. The owned host process tree is
+                # still terminated below so the bridge cannot leave a local orphan.
+                pass
+        _stop_owned_process_tree(process, timeout=2)
+    _close_inprocess_rsd()
 
 
 def _run_wda(*args, timeout=30):
@@ -535,12 +732,19 @@ def accessibility_elements():
     _require_device()
     _wda_runner_bundle()
     try:
-        items = _json_wda("list-items", "--with-rect", "--lean-source")
+        if _inprocess_supported():
+            _ensure_wda_runner()
+            items = _inprocess_wda_items()
+        else:
+            items = _json_wda("list-items", "--with-rect", "--lean-source")
     except RuntimeError as exc:
         if not _is_stale_wda_application_error(exc):
             raise
         _restart_wda_runner()
-        items = _json_wda("list-items", "--with-rect", "--lean-source")
+        if _inprocess_supported():
+            items = _inprocess_wda_items()
+        else:
+            items = _json_wda("list-items", "--with-rect", "--lean-source")
     if not isinstance(items, list):
         raise RuntimeError("WDA returned an unexpected accessibility listing")
 
@@ -644,7 +848,9 @@ def ensure_window(timeout=90):
     if _SCREEN_SIZE is not None and _POINT_SCALE is not None:
         width, height = _SCREEN_SIZE
     else:
-        data = _json_pm3("developer", "core-device", "get-display-info", timeout=timeout)
+        data = _inprocess_get_display_info(timeout=timeout) if _inprocess_supported() else None
+        if data is None:
+            data = _json_pm3("developer", "core-device", "get-display-info", timeout=timeout)
         width, height = _display_size(data)
         _SCREEN_SIZE = (width, height)
         _POINT_SCALE = _display_point_scale(data)
@@ -805,7 +1011,10 @@ def open_app(name):
     cache_key = name.casefold()
     bundle = _APP_BUNDLE_CACHE.get(cache_key)
     if bundle is None:
-        apps = _normalize_apps(_json_pm3("apps", "list"))
+        app_mapping = _inprocess_list_apps() if _inprocess_supported() else None
+        if app_mapping is None:
+            app_mapping = _json_pm3("apps", "list")
+        apps = _normalize_apps(app_mapping)
         bundle = _resolve_app_bundle(name, apps)
         _APP_BUNDLE_CACHE[cache_key] = bundle
     # CoreDevice's service accepts an empty argument list, while the current
@@ -813,14 +1022,16 @@ def open_app(name):
     # empty string preserves the service semantics and also works for system
     # apps that DVT launch can reject (for example Calculator on iOS 26).
     try:
-        _run_pm3(
-            "developer",
-            "core-device",
-            "launch-application",
-            "--no-kill-existing",
-            bundle,
-            "",
-        )
+        launched = _inprocess_launch_app(bundle) if _inprocess_supported() else False
+        if not launched:
+            _run_pm3(
+                "developer",
+                "core-device",
+                "launch-application",
+                "--no-kill-existing",
+                bundle,
+                "",
+            )
     except RuntimeError:
         _APP_BUNDLE_CACHE.pop(cache_key, None)
         raise

@@ -106,6 +106,26 @@ class CoordinateTests(unittest.TestCase):
         finally:
             windows._SCREEN_SIZE, windows._POINT_SCALE = old_size, old_scale
 
+    def test_ensure_window_prefers_inprocess_display_info_on_wifi(self):
+        old_size, old_scale = windows._SCREEN_SIZE, windows._POINT_SCALE
+        windows._SCREEN_SIZE = None
+        windows._POINT_SCALE = None
+        display_info = {
+            "displays": [{"primary": True, "pointScale": 3, "currentMode": {"size": [1206, 2622]}}]
+        }
+        try:
+            with patch.object(windows, "_require_device"), \
+                    patch.object(windows, "_inprocess_supported", return_value=True), \
+                    patch.object(windows, "_inprocess_get_display_info", return_value=display_info) as direct, \
+                    patch.object(windows, "_json_pm3") as cli:
+                result = windows.ensure_window()
+        finally:
+            windows._SCREEN_SIZE, windows._POINT_SCALE = old_size, old_scale
+
+        self.assertEqual(result["w"], 1206)
+        direct.assert_called_once_with(timeout=90)
+        cli.assert_not_called()
+
 
 class DeviceSelectionTests(unittest.TestCase):
     def test_usb_is_default_transport(self):
@@ -204,6 +224,46 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(result[0]["x"], 375)
         self.assertEqual(result[0]["y"], 690)
         json_wda.assert_called_once_with("list-items", "--with-rect", "--lean-source")
+
+    def test_accessibility_elements_prefers_inprocess_wda_on_wifi(self):
+        old_scale = windows._POINT_SCALE
+        windows._POINT_SCALE = 3
+        items = [{
+            "type": "XCUIElementTypeButton",
+            "name": "eight",
+            "label": "8",
+            "value": None,
+            "visible": "true",
+            "rect": {"x": "100", "y": "200", "width": "50", "height": "60"},
+        }]
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_wda_runner_bundle", return_value="runner"), \
+                    patch.object(windows, "_inprocess_supported", return_value=True), \
+                    patch.object(windows, "_ensure_wda_runner") as ensure, \
+                    patch.object(windows, "_inprocess_wda_items", return_value=items) as direct, \
+                    patch.object(windows, "_json_wda") as cli:
+                result = windows.accessibility_elements()
+        finally:
+            windows._POINT_SCALE = old_scale
+
+        self.assertEqual(result[0]["text"], "8")
+        ensure.assert_called_once_with()
+        direct.assert_called_once_with()
+        cli.assert_not_called()
+
+    def test_wda_items_from_source_preserves_tap_ready_fields(self):
+        source = (
+            '<XCUIElementTypeApplication visible="true">'
+            '<XCUIElementTypeButton name="eight" label="8" visible="true" '
+            'x="100" y="200" width="50" height="60" />'
+            '</XCUIElementTypeApplication>'
+        )
+        items = windows._wda_items_from_source(source)
+        button = next(item for item in items if item["name"] == "eight")
+        self.assertEqual(button["label"], "8")
+        self.assertEqual(button["visible"], "true")
+        self.assertEqual(button["rect"]["width"], "50")
 
     def test_accessibility_elements_restarts_once_for_stale_wda_application(self):
         old_scale = windows._POINT_SCALE
@@ -419,6 +479,28 @@ class AppResolutionTests(unittest.TestCase):
 
         query.assert_not_called()
         self.assertIsNone(cached_after_failure)
+
+    def test_open_app_prefers_inprocess_listing_and_launch_on_wifi(self):
+        old_cache = dict(windows._APP_BUNDLE_CACHE)
+        windows._APP_BUNDLE_CACHE.clear()
+        apps = {"com.example.app": {"CFBundleDisplayName": "Example"}}
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_inprocess_supported", return_value=True), \
+                    patch.object(windows, "_inprocess_list_apps", return_value=apps) as list_apps, \
+                    patch.object(windows, "_inprocess_launch_app", return_value=True) as launch, \
+                    patch.object(windows, "_json_pm3") as cli_query, \
+                    patch.object(windows, "_run_pm3") as cli_run:
+                bundle = windows.open_app("Example")
+        finally:
+            windows._APP_BUNDLE_CACHE.clear()
+            windows._APP_BUNDLE_CACHE.update(old_cache)
+
+        self.assertEqual(bundle, "com.example.app")
+        list_apps.assert_called_once_with()
+        launch.assert_called_once_with("com.example.app")
+        cli_query.assert_not_called()
+        cli_run.assert_not_called()
 
 
 class TypingTests(unittest.TestCase):
