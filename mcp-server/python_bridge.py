@@ -26,8 +26,16 @@ def _handle(method: str, params: dict) -> dict:
                 force=bool(params.get("force", False)),
                 include_text_content=bool(params.get("include_text_content", False)),
             )
-            if params.get("include_image") is True:
+            visual_grid = params.get("visual_grid")
+            path = None
+            if params.get("include_image") is True or visual_grid is not None:
                 path = Path(helpers.screenshot())
+            if visual_grid is not None:
+                from phone_harness.visual_grid import analyze_grid
+
+                result["visual_grid"] = analyze_grid(path, **visual_grid)
+            if params.get("include_image") is True:
+                assert path is not None
                 result = {
                     **result,
                     "_image": {

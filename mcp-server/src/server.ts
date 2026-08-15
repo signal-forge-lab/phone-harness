@@ -19,6 +19,22 @@ const actionSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("wait_stable"), timeout: z.number().positive().optional(), interval: z.number().positive().optional(), settle: z.number().int().positive().optional() }),
 ]);
 
+const visualGridSchema = z.object({
+  rows: z.number().int().positive().max(50),
+  columns: z.number().int().positive().max(50),
+  bounds: z.object({
+    x: z.number().nonnegative(),
+    y: z.number().nonnegative(),
+    w: z.number().positive(),
+    h: z.number().positive(),
+  }),
+  inset: z.number().min(0).max(0.49).optional(),
+  exact_threshold: z.number().positive().max(1).optional(),
+  min_content_score: z.number().min(0).max(255).optional(),
+}).refine((grid) => grid.rows * grid.columns <= 400, {
+  message: "visual_grid may contain at most 400 cells",
+});
+
 export function createPhoneMcpServer(runtime: RuntimeBridge): McpServer {
   const server = new McpServer(
     { name: "phone-harness", version: "0.1.0" },
@@ -38,16 +54,22 @@ export function createPhoneMcpServer(runtime: RuntimeBridge): McpServer {
   server.registerTool(
     "phone_observe",
     {
-      description: "Observe the current iPhone screen. Uses accessibility first and OCR fallback. Returns temporary element_ref values for precise follow-up actions and hides document/editable text bodies by default. Request an image or full text only when the task requires it.",
+      description: "Observe the current iPhone screen. Uses accessibility first and OCR fallback. Returns temporary element_ref values for precise follow-up actions and hides document/editable text bodies by default. For games/canvas-style regular boards, request an image first to infer screenshot-pixel board bounds, then use visual_grid to obtain stable cell centers and conservative same-looking candidates. Treat those as visual candidates only and verify task/game semantics before mutating.",
       inputSchema: {
         force: z.boolean().optional().describe("Force a fresh observation instead of using the short-lived runtime cache."),
         include_image: z.boolean().optional().describe("Also return the current screenshot as image content. Defaults to false."),
         include_text_content: z.boolean().optional().describe("Include full document/editable text content. Keep false unless the task specifically requires reading it."),
+        visual_grid: visualGridSchema.optional().describe("Analyze a regular visual board inside screenshot pixel bounds. Returns per-cell centers, signatures, perceptual hashes, pair similarity scores, and conservative exact-looking groups for vision-driven manipulation."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ force, include_image, include_text_content }) => toolResult(
-      () => runtime.call("observe", { force: force ?? false, include_image: include_image ?? false, include_text_content: include_text_content ?? false }),
+    async ({ force, include_image, include_text_content, visual_grid }) => toolResult(
+      () => runtime.call("observe", {
+        force: force ?? false,
+        include_image: include_image ?? false,
+        include_text_content: include_text_content ?? false,
+        ...(visual_grid === undefined ? {} : { visual_grid }),
+      }),
       true,
     ),
   );

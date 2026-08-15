@@ -90,6 +90,32 @@ test("phone_observe forwards explicit full-text request", async (t) => {
   });
 });
 
+test("phone_observe forwards optional visual grid analysis", async (t) => {
+  const runtime = new FakeRuntime();
+  const handler = createPhoneMcpHandler(runtime);
+  t.after(() => handler.close());
+  const response = await postModern(handler, "tools/call", {
+    name: "phone_observe",
+    arguments: {
+      visual_grid: {
+        rows: 9,
+        columns: 7,
+        bounds: { x: 30, y: 600, w: 1120, h: 1450 },
+      },
+    },
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual(runtime.calls.at(-1), {
+    method: "observe",
+    params: {
+      force: false,
+      include_image: false,
+      include_text_content: false,
+      visual_grid: { rows: 9, columns: 7, bounds: { x: 30, y: 600, w: 1120, h: 1450 } },
+    },
+  });
+});
+
 test("phone_act forwards observation id and batch without inventing phone logic", async (t) => {
   const runtime = new FakeRuntime();
   const handler = createPhoneMcpHandler(runtime);
