@@ -7,6 +7,7 @@ export const MODERN_MCP_PROTOCOL_VERSION = "2026-07-28";
 
 const actionSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("tap_text"), text: z.string().min(1), exact: z.boolean().optional(), index: z.number().int().nonnegative().optional() }),
+  z.object({ op: z.literal("tap_element"), element_ref: z.string().min(1) }),
   z.object({ op: z.literal("tap"), x: z.number(), y: z.number() }),
   z.object({ op: z.literal("drag"), x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number(), duration: z.number().positive().optional() }),
   z.object({ op: z.literal("type_text"), text: z.string() }),
@@ -37,15 +38,16 @@ export function createPhoneMcpServer(runtime: RuntimeBridge): McpServer {
   server.registerTool(
     "phone_observe",
     {
-      description: "Observe the current iPhone screen. Uses accessibility first and OCR fallback. Request an image only when semantic observation is insufficient.",
+      description: "Observe the current iPhone screen. Uses accessibility first and OCR fallback. Returns temporary element_ref values for precise follow-up actions and hides document/editable text bodies by default. Request an image or full text only when the task requires it.",
       inputSchema: {
         force: z.boolean().optional().describe("Force a fresh observation instead of using the short-lived runtime cache."),
         include_image: z.boolean().optional().describe("Also return the current screenshot as image content. Defaults to false."),
+        include_text_content: z.boolean().optional().describe("Include full document/editable text content. Keep false unless the task specifically requires reading it."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ force, include_image }) => toolResult(
-      () => runtime.call("observe", { force: force ?? false, include_image: include_image ?? false }),
+    async ({ force, include_image, include_text_content }) => toolResult(
+      () => runtime.call("observe", { force: force ?? false, include_image: include_image ?? false, include_text_content: include_text_content ?? false }),
       true,
     ),
   );
@@ -53,7 +55,7 @@ export function createPhoneMcpServer(runtime: RuntimeBridge): McpServer {
   server.registerTool(
     "phone_act",
     {
-      description: "Execute one bounded batch of phone actions. Use the observation_id returned by phone_observe for semantic or observation-derived actions.",
+      description: "Execute one bounded batch of phone actions. Use the observation_id returned by phone_observe for semantic or observation-derived actions; prefer tap_element with an element_ref when a precise observed target is available.",
       inputSchema: {
         observation_id: z.number().int().positive().optional(),
         actions: z.array(actionSchema).min(1).max(100),

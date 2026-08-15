@@ -279,6 +279,30 @@ def _inprocess_launch_app(bundle, timeout=30):
     return True
 
 
+def _inprocess_press_home(timeout=10):
+    provider = _inprocess_rsd()
+    if provider is None:
+        return False
+
+    async def task():
+        from pymobiledevice3.remote.core_device.hid_service import (
+            HID_BUTTON_STATE_DOWN,
+            HID_BUTTON_STATE_UP,
+            IndigoHIDService,
+        )
+
+        async with IndigoHIDService(provider) as service:
+            await service.send_button(0x0C, 0x40, HID_BUTTON_STATE_DOWN)
+            await asyncio.sleep(0.05)
+            await service.send_button(0x0C, 0x40, HID_BUTTON_STATE_UP)
+
+    try:
+        _run_async(task(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError("pymobiledevice3 in-process home press failed") from exc
+    return True
+
+
 def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
     global _PM3_PROCESS_COUNT, _PM3_LAST_OPERATION, _PM3_LAST_DURATION_MS, _PM3_LAST_RESULT
     started = time.perf_counter()
@@ -983,16 +1007,41 @@ def press(combo):
     key = combo.lower()
     if key in {"cmd+1", "home"}:
         _require_device()
-        _run_pm3("developer", "core-device", "hid", "button", "home")
+        pressed = _inprocess_press_home() if _inprocess_supported() else False
+        if not pressed:
+            _run_pm3("developer", "core-device", "hid", "button", "home")
         return
     raise ValueError(f"Windows CoreDevice backend does not support key combo {combo!r}")
 
 
 _SYSTEM_APP_ALIASES = {
     "settings": "com.apple.Preferences",
+    "設定": "com.apple.Preferences",
     "notes": "com.apple.mobilenotes",
+    "メモ": "com.apple.mobilenotes",
     "weather": "com.apple.weather",
+    "天気": "com.apple.weather",
     "calculator": "com.apple.calculator",
+    "計算機": "com.apple.calculator",
+    "clock": "com.apple.mobiletimer",
+    "時計": "com.apple.mobiletimer",
+    "calendar": "com.apple.mobilecal",
+    "カレンダー": "com.apple.mobilecal",
+    "photos": "com.apple.mobileslideshow",
+    "写真": "com.apple.mobileslideshow",
+    "camera": "com.apple.camera",
+    "カメラ": "com.apple.camera",
+    "maps": "com.apple.Maps",
+    "マップ": "com.apple.Maps",
+    "reminders": "com.apple.reminders",
+    "リマインダー": "com.apple.reminders",
+    "files": "com.apple.DocumentsApp",
+    "ファイル": "com.apple.DocumentsApp",
+    "safari": "com.apple.mobilesafari",
+    "mail": "com.apple.mobilemail",
+    "メール": "com.apple.mobilemail",
+    "messages": "com.apple.MobileSMS",
+    "メッセージ": "com.apple.MobileSMS",
 }
 
 
@@ -1026,17 +1075,25 @@ def _normalize_apps(data):
     ]
 
 
-def open_app(name):
+def preflight_open_app(name):
+    """Resolve and cache an app name without launching it."""
     _require_device()
     cache_key = name.casefold()
     bundle = _APP_BUNDLE_CACHE.get(cache_key)
-    if bundle is None:
-        app_mapping = _inprocess_list_apps() if _inprocess_supported() else None
-        if app_mapping is None:
-            app_mapping = _json_pm3("apps", "list")
-        apps = _normalize_apps(app_mapping)
-        bundle = _resolve_app_bundle(name, apps)
-        _APP_BUNDLE_CACHE[cache_key] = bundle
+    if bundle is not None:
+        return bundle
+    app_mapping = _inprocess_list_apps() if _inprocess_supported() else None
+    if app_mapping is None:
+        app_mapping = _json_pm3("apps", "list")
+    bundle = _resolve_app_bundle(name, _normalize_apps(app_mapping))
+    _APP_BUNDLE_CACHE[cache_key] = bundle
+    return bundle
+
+
+def open_app(name):
+    _require_device()
+    cache_key = name.casefold()
+    bundle = preflight_open_app(name)
     # CoreDevice's service accepts an empty argument list, while the current
     # CLI requires at least one positional application argument. Passing one
     # empty string preserves the service semantics and also works for system

@@ -22,7 +22,10 @@ def _handle(method: str, params: dict) -> dict:
         if method == "status":
             return RUNTIME.status()
         if method == "observe":
-            result = RUNTIME.observe(force=bool(params.get("force", False)))
+            result = RUNTIME.observe(
+                force=bool(params.get("force", False)),
+                include_text_content=bool(params.get("include_text_content", False)),
+            )
             if params.get("include_image") is True:
                 path = Path(helpers.screenshot())
                 result = {

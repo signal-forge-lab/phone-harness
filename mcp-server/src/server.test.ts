@@ -69,6 +69,25 @@ test("phone_observe returns semantic data and only includes an image when reques
   assert.equal(body.result?.structuredContent?.observation_id, 7);
   assert.equal(Object.hasOwn(body.result?.structuredContent ?? {}, "_image"), false);
   assert.ok(body.result?.content?.some((item) => item.type === "image" && item.data === "aGVsbG8="));
+  assert.deepEqual(runtime.calls.at(-1), {
+    method: "observe",
+    params: { force: false, include_image: true, include_text_content: false },
+  });
+});
+
+test("phone_observe forwards explicit full-text request", async (t) => {
+  const runtime = new FakeRuntime();
+  const handler = createPhoneMcpHandler(runtime);
+  t.after(() => handler.close());
+  const response = await postModern(handler, "tools/call", {
+    name: "phone_observe",
+    arguments: { include_text_content: true },
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual(runtime.calls.at(-1), {
+    method: "observe",
+    params: { force: false, include_image: false, include_text_content: true },
+  });
 });
 
 test("phone_act forwards observation id and batch without inventing phone logic", async (t) => {
@@ -87,6 +106,21 @@ test("phone_act forwards observation id and batch without inventing phone logic"
   assert.deepEqual(runtime.calls.at(-1), {
     method: "act",
     params: { observation_id: 7, actions: [{ op: "tap_text", text: "Search", exact: true }] },
+  });
+});
+
+test("phone_act accepts observation element refs", async (t) => {
+  const runtime = new FakeRuntime();
+  const handler = createPhoneMcpHandler(runtime);
+  t.after(() => handler.close());
+  const response = await postModern(handler, "tools/call", {
+    name: "phone_act",
+    arguments: { observation_id: 7, actions: [{ op: "tap_element", element_ref: "e3" }] },
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual(runtime.calls.at(-1), {
+    method: "act",
+    params: { observation_id: 7, actions: [{ op: "tap_element", element_ref: "e3" }] },
   });
 });
 

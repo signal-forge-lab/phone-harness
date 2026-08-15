@@ -90,6 +90,51 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(first["duration_ms"], 0)
         read.assert_called_once_with()
 
+    def test_observe_prunes_long_document_content_but_keeps_internal_snapshot(self):
+        runtime = PhoneRuntime(observation_ttl=10)
+        private_text = "secret " * 100
+        elements = [{
+            "text": private_text,
+            "value": private_text,
+            "source": "accessibility",
+            "role": "XCUIElementTypeTextView",
+            "x": 10, "y": 20, "w": 100, "h": 200,
+        }]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observed = runtime.observe()
+        self.assertEqual(observed["elements"][0]["text"], "[text content hidden]")
+        self.assertTrue(observed["elements"][0]["content_hidden"])
+        self.assertNotIn("secret", repr(observed))
+        self.assertIn("secret", runtime._observation["elements"][0]["text"])
+
+    def test_observe_hides_short_document_body_by_default(self):
+        runtime = PhoneRuntime()
+        elements = [{"text": "short private note", "value": "short private note", "source": "accessibility", "role": "XCUIElementTypeTextView", "x": 1, "y": 2}]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observed = runtime.observe()
+        self.assertEqual(observed["elements"][0]["text"], "[text content hidden]")
+
+    def test_observe_can_explicitly_include_document_content(self):
+        runtime = PhoneRuntime(observation_ttl=10)
+        elements = [{"text": "document body", "value": "document body", "source": "accessibility", "role": "XCUIElementTypeTextView", "x": 1, "y": 2}]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observed = runtime.observe(include_text_content=True)
+        self.assertEqual(observed["elements"][0]["text"], "document body")
+
+    def test_observe_assigns_element_refs(self):
+        runtime = PhoneRuntime()
+        with patch("phone_harness.runtime.helpers.elements", return_value=[{"text": "Battery", "source": "accessibility", "role": "XCUIElementTypeButton", "x": 1, "y": 2}]):
+            observed = runtime.observe()
+        self.assertEqual(observed["elements"][0]["element_ref"], "e1")
+
+    def test_observe_redacts_luhn_valid_payment_card_text(self):
+        runtime = PhoneRuntime()
+        elements = [{"text": "4111 1111 1111 1111", "source": "accessibility", "role": "XCUIElementTypeLink", "x": 1, "y": 2}]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observed = runtime.observe()
+        self.assertEqual(observed["elements"][0]["text"], "[payment card redacted]")
+        self.assertNotIn("4111", repr(observed))
+
     def test_forced_observe_advances_observation_id(self):
         runtime = PhoneRuntime(observation_ttl=10)
         with patch("phone_harness.runtime.helpers.elements", return_value=[]):
@@ -134,6 +179,53 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(result["duration_ms"], 0)
         tap.assert_called_once()
         self.assertEqual([item["text"] for item in tap.call_args.args[0]], ["1", "2"])
+
+    def test_tap_text_prefers_unique_actionable_role_over_child_static_text(self):
+        runtime = PhoneRuntime()
+        elements = [
+            {"text": "Battery", "source": "accessibility", "role": "XCUIElementTypeButton", "name": "battery", "x": 10, "y": 20},
+            {"text": "Battery", "source": "accessibility", "role": "XCUIElementTypeStaticText", "x": 10, "y": 20},
+        ]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observation = runtime.observe()
+        with patch("phone_harness.runtime.sys.platform", "win32"), \
+                patch("phone_harness.windows.wda_runtime_batch_supported", return_value=False), \
+                patch("phone_harness.windows.tap_accessibility_batch") as tap:
+            runtime.act([{"op": "tap_text", "text": "Battery", "exact": True}], observation_id=observation["observation_id"])
+        self.assertEqual(tap.call_args.args[0][0]["role"], "XCUIElementTypeButton")
+
+    def test_tap_element_uses_observation_ref(self):
+        runtime = PhoneRuntime()
+        with patch("phone_harness.runtime.helpers.elements", return_value=[{"text": "Battery", "source": "accessibility", "role": "XCUIElementTypeButton", "name": "battery", "x": 10, "y": 20}]):
+            observation = runtime.observe()
+        ref = observation["elements"][0]["element_ref"]
+        with patch("phone_harness.runtime.sys.platform", "win32"), \
+                patch("phone_harness.windows.wda_runtime_batch_supported", return_value=False), \
+                patch("phone_harness.windows.tap_accessibility_batch") as tap:
+            runtime.act([{"op": "tap_element", "element_ref": ref}], observation_id=observation["observation_id"])
+        tap.assert_called_once()
+
+    def test_tap_element_result_does_not_reveal_hidden_document_text(self):
+        runtime = PhoneRuntime()
+        elements = [{"text": "private note", "value": "private note", "source": "accessibility", "role": "XCUIElementTypeTextView", "name": "Note", "x": 10, "y": 20}]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observation = runtime.observe()
+        ref = observation["elements"][0]["element_ref"]
+        with patch("phone_harness.runtime.sys.platform", "darwin"), \
+                patch("phone_harness.runtime.helpers.tap"):
+            result = runtime.act([{"op": "tap_element", "element_ref": ref}], observation_id=observation["observation_id"])
+        self.assertEqual(result["results"][0]["result"]["text"], "[text content hidden]")
+        self.assertNotIn("private note", repr(result))
+
+    def test_open_app_is_resolved_during_preflight_before_home_mutates(self):
+        runtime = PhoneRuntime()
+        with patch("phone_harness.runtime.sys.platform", "win32"), \
+                patch("phone_harness.windows.preflight_open_app", side_effect=RuntimeError("missing")), \
+                patch("phone_harness.runtime.helpers.home") as home:
+            with self.assertRaises(PhoneRuntimeError) as raised:
+                runtime.act([{"op": "home"}, {"op": "open_app", "name": "Missing"}])
+        self.assertEqual(raised.exception.phase, "preflight")
+        home.assert_not_called()
 
     def test_ios_26_batches_accessibility_type_and_swipe_in_one_wda_call(self):
         runtime = PhoneRuntime(observation_ttl=10)

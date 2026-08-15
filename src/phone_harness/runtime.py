@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -17,6 +18,14 @@ from . import helpers
 
 RUNTIME_CONTRACT_VERSION = 2
 MONITOR_SCHEMA_VERSION = 1
+_ACTIONABLE_ROLES = {
+    "XCUIElementTypeButton", "XCUIElementTypeCell", "XCUIElementTypeIcon",
+    "XCUIElementTypeKey", "XCUIElementTypeLink", "XCUIElementTypeSearchField",
+    "XCUIElementTypeSwitch", "XCUIElementTypeTextField",
+}
+_DOCUMENT_ROLES = {"XCUIElementTypeTextView"}
+_DOCUMENT_TEXT_LIMIT = 240
+_CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ \u3000-]?){12,18}\d(?!\d)")
 STATUS_FILE = Path(
     os.environ.get(
         "PHONE_HARNESS_STATUS_FILE",
@@ -31,6 +40,69 @@ def _duration_ms(started):
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _redact_payment_cards(text):
+    if not isinstance(text, str):
+        return text
+
+    def replace(match):
+        digits = "".join(character for character in match.group(0) if character.isdigit())
+        total = 0
+        parity = len(digits) % 2
+        for index, character in enumerate(digits):
+            value = int(character)
+            if index % 2 == parity:
+                value *= 2
+                if value > 9:
+                    value -= 9
+            total += value
+        return "[payment card redacted]" if total % 10 == 0 else match.group(0)
+
+    return _CARD_CANDIDATE.sub(replace, text)
+
+
+def _public_elements(elements, include_text_content=False):
+    result = []
+    seen = set()
+    for item in elements:
+        text = item.get("text")
+        if isinstance(text, str) and text.startswith("/var/containers/"):
+            continue
+        hidden = (
+            not include_text_content
+            and item.get("role") in _DOCUMENT_ROLES
+            and isinstance(text, str)
+            and text == item.get("value")
+            and bool(text)
+        )
+        public = {
+            key: item[key]
+            for key in ("element_ref", "confidence", "x", "y", "w", "h", "source", "role")
+            if key in item
+        }
+        public["text"] = "[text content hidden]" if hidden else _redact_payment_cards(text)
+        if hidden:
+            public["content_hidden"] = True
+        name = item.get("name")
+        if isinstance(name, str) and name and name != text and not name.startswith("/var/containers/"):
+            public["name"] = _redact_payment_cards(name[:_DOCUMENT_TEXT_LIMIT])
+        key = tuple(public.get(field) for field in ("text", "role", "x", "y", "w", "h"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(public)
+    return result
+
+
+def _target_result(target):
+    public = _public_elements([target])
+    item = public[0] if public else {"text": "[target hidden]"}
+    return {
+        "text": item.get("text"),
+        "source": target.get("source", "ocr"),
+        **({"element_ref": target["element_ref"]} if target.get("element_ref") else {}),
+    }
 
 
 class PhoneRuntimeError(RuntimeError):
@@ -250,7 +322,7 @@ class PhoneRuntime:
             self._record_error("status", error, started)
             raise error from exc
 
-    def observe(self, force=False):
+    def observe(self, force=False, include_text_content=False):
         started = time.perf_counter()
         pm3_before = self._pm3_process_count()
         self._counters["observe"] += 1
@@ -263,7 +335,10 @@ class PhoneRuntime:
                 and now - self._observed_at <= self.observation_ttl
             )
             if not cached:
-                elements = helpers.elements()
+                elements = [
+                    {**item, "element_ref": f"e{index}"}
+                    for index, item in enumerate(helpers.elements(), 1)
+                ]
                 source = elements[0].get("source", "ocr") if elements else "none"
                 self._observation = {"source": source, "elements": elements}
                 self._observation_id = self._next_observation_id
@@ -272,6 +347,9 @@ class PhoneRuntime:
             assert self._observation is not None
             assert self._observation_id is not None
             result = copy.deepcopy(self._observation)
+            result["elements"] = _public_elements(
+                self._observation["elements"], include_text_content=include_text_content
+            )
             result["contract_version"] = RUNTIME_CONTRACT_VERSION
             result["observation_id"] = self._observation_id
             result["cached"] = cached
@@ -337,6 +415,9 @@ class PhoneRuntime:
                 phase="preflight",
             )
         if index is None:
+            actionable = [item for item in hits if item.get("role") in _ACTIONABLE_ROLES]
+            if len(actionable) == 1:
+                return actionable[0]
             if len(hits) != 1:
                 raise PhoneRuntimeError(
                     "TARGET_AMBIGUOUS",
@@ -348,6 +429,20 @@ class PhoneRuntime:
         if not isinstance(index, int) or index < 0 or index >= len(hits):
             raise ValueError(f"tap_text index {index!r} is outside {len(hits)} matches")
         return hits[index]
+
+    @staticmethod
+    def _match_ref(elements, element_ref):
+        if not isinstance(element_ref, str) or not element_ref:
+            raise ValueError("tap_element requires non-empty element_ref")
+        for item in elements:
+            if item.get("element_ref") == element_ref:
+                return item
+        raise PhoneRuntimeError(
+            "TARGET_NOT_FOUND",
+            f"element_ref {element_ref!r} is not present in the current observation",
+            retryable=True,
+            phase="preflight",
+        )
 
     @staticmethod
     def _number(action, key, default=None):
@@ -384,6 +479,10 @@ class PhoneRuntime:
                     index,
                 )
                 prepared.append((op, action, target))
+            elif op == "tap_element":
+                if observation is None:
+                    observation = self._require_observation(observation_id)
+                prepared.append((op, action, self._match_ref(observation["elements"], action.get("element_ref"))))
             elif op == "tap":
                 self._number(action, "x")
                 self._number(action, "y")
@@ -441,10 +540,15 @@ class PhoneRuntime:
             if observation_id is not None:
                 self._require_observation(observation_id)
             prepared = self._prepare(actions, observation_id=observation_id)
+            if sys.platform == "win32":
+                from . import windows
+                for op, action, _target in prepared:
+                    if op == "open_app":
+                        windows.preflight_open_app(action["name"])
         except PhoneRuntimeError as error:
             self._record_error("act", error, started)
             raise
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             error = PhoneRuntimeError(
                 "INVALID_REQUEST", str(exc), phase="preflight"
             )
@@ -456,8 +560,8 @@ class PhoneRuntime:
             from . import windows
 
             wda_batchable = all(
-                op in {"tap_text", "tap", "drag", "type_text", "swipe", "scroll"}
-                and (op != "tap_text" or target.get("source") == "accessibility")
+                op in {"tap_text", "tap_element", "tap", "drag", "type_text", "swipe", "scroll"}
+                and (op not in {"tap_text", "tap_element"} or target.get("source") == "accessibility")
                 for op, _action, target in prepared
             )
             if prepared and wda_batchable and windows.wda_runtime_batch_supported():
@@ -465,9 +569,9 @@ class PhoneRuntime:
                 wda_actions = []
                 results = []
                 for op, action, target in prepared:
-                    if op == "tap_text":
+                    if op in {"tap_text", "tap_element"}:
                         wda_actions.append(windows._wda_action_for_accessibility(target))
-                        result = {"text": target["text"], "source": "accessibility"}
+                        result = _target_result(target)
                     elif op == "tap":
                         wda_actions.append(windows._wda_action_for_tap(action["x"], action["y"]))
                         result = None
@@ -512,7 +616,7 @@ class PhoneRuntime:
         if (
             sys.platform == "win32"
             and prepared
-            and all(op == "tap_text" and target.get("source") == "accessibility" for op, _action, target in prepared)
+            and all(op in {"tap_text", "tap_element"} and target.get("source") == "accessibility" for op, _action, target in prepared)
         ):
             from . import windows
 
@@ -527,8 +631,8 @@ class PhoneRuntime:
                 )
                 raise error from exc
             results = [
-                {"op": "tap_text", "result": {"text": target["text"], "source": "accessibility"}}
-                for target in targets
+                {"op": op, "result": _target_result(target)}
+                for op, _action, target in prepared
             ]
             return self._complete_action(
                 results, "native_batch", started, pm3_before, consumed_observation_id
@@ -538,14 +642,14 @@ class PhoneRuntime:
         results = []
         for action_index, (op, action, target) in enumerate(prepared):
             try:
-                if op == "tap_text":
+                if op in {"tap_text", "tap_element"}:
                     if sys.platform == "win32" and target.get("source") == "accessibility":
                         from . import windows
 
                         windows.tap_accessibility(target)
                     else:
                         helpers.tap(target["x"], target["y"])
-                    result = {"text": target["text"], "source": target.get("source", "ocr")}
+                    result = _target_result(target)
                 elif op == "tap":
                     helpers.tap(action["x"], action["y"])
                     result = None

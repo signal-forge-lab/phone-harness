@@ -418,11 +418,31 @@ class AppResolutionTests(unittest.TestCase):
             {"bundleIdentifier": "com.apple.mobilenotes", "CFBundleDisplayName": "localized-notes"},
             {"bundleIdentifier": "com.apple.weather", "CFBundleDisplayName": "localized-weather"},
             {"bundleIdentifier": "com.apple.calculator", "CFBundleDisplayName": "localized-calculator"},
+            {"bundleIdentifier": "com.apple.mobiletimer", "CFBundleDisplayName": "時計"},
+            {"bundleIdentifier": "com.apple.mobilecal", "CFBundleDisplayName": "カレンダー"},
         ]
         self.assertEqual(windows._resolve_app_bundle("Settings", apps), "com.apple.Preferences")
         self.assertEqual(windows._resolve_app_bundle("Notes", apps), "com.apple.mobilenotes")
         self.assertEqual(windows._resolve_app_bundle("Weather", apps), "com.apple.weather")
         self.assertEqual(windows._resolve_app_bundle("Calculator", apps), "com.apple.calculator")
+        self.assertEqual(windows._resolve_app_bundle("Clock", apps), "com.apple.mobiletimer")
+        self.assertEqual(windows._resolve_app_bundle("時計", apps), "com.apple.mobiletimer")
+        self.assertEqual(windows._resolve_app_bundle("Calendar", apps), "com.apple.mobilecal")
+
+    def test_preflight_open_app_resolves_and_caches_without_launching(self):
+        old_cache = dict(windows._APP_BUNDLE_CACHE)
+        windows._APP_BUNDLE_CACHE.clear()
+        try:
+            with patch.object(windows, "_require_device", return_value="device-1"), \
+                    patch.object(windows, "_inprocess_supported", return_value=False), \
+                    patch.object(windows, "_json_pm3", return_value={"com.apple.mobiletimer": {"CFBundleDisplayName": "時計"}}), \
+                    patch.object(windows, "_run_pm3") as run:
+                bundle = windows.preflight_open_app("Clock")
+        finally:
+            windows._APP_BUNDLE_CACHE.clear()
+            windows._APP_BUNDLE_CACHE.update(old_cache)
+        self.assertEqual(bundle, "com.apple.mobiletimer")
+        run.assert_not_called()
 
     def test_resolve_app_bundle_rejects_ambiguous_names(self):
         apps = [
@@ -539,6 +559,15 @@ class GestureSafetyTests(unittest.TestCase):
         with patch.object(windows, "drag") as drag:
             windows.scroll_wheel(0, 100, 200)
         drag.assert_not_called()
+
+    def test_home_press_prefers_inprocess_hid_on_wifi(self):
+        with patch.object(windows, "_require_device"), \
+                patch.object(windows, "_inprocess_supported", return_value=True), \
+                patch.object(windows, "_inprocess_press_home", return_value=True) as home, \
+                patch.object(windows, "_run_pm3") as cli:
+            windows.press("home")
+        home.assert_called_once_with()
+        cli.assert_not_called()
 
 
 class StabilityTests(unittest.TestCase):
