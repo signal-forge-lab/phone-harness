@@ -44,12 +44,14 @@ test("modern server exposes exactly the three phone tools with safe annotations"
   const response = await postModern(handler, "tools/list", {});
   assert.equal(response.status, 200);
   const body = await response.json() as {
-    result?: { tools?: Array<{ name: string; annotations?: Record<string, unknown> }> };
+    result?: { tools?: Array<{ name: string; annotations?: Record<string, unknown>; inputSchema?: { properties?: Record<string, unknown> } }> };
   };
   const tools = body.result?.tools ?? [];
   assert.deepEqual(tools.map((tool) => tool.name).sort(), ["phone_act", "phone_observe", "phone_status"]);
   assert.equal(tools.find((tool) => tool.name === "phone_status")?.annotations?.readOnlyHint, true);
-  assert.equal(tools.find((tool) => tool.name === "phone_observe")?.annotations?.readOnlyHint, true);
+  const observe = tools.find((tool) => tool.name === "phone_observe");
+  assert.equal(observe?.annotations?.readOnlyHint, true);
+  assert.equal(Object.hasOwn(observe?.inputSchema?.properties ?? {}, "visual_grid"), false);
   assert.equal(tools.find((tool) => tool.name === "phone_act")?.annotations?.readOnlyHint, false);
 });
 
@@ -87,32 +89,6 @@ test("phone_observe forwards explicit full-text request", async (t) => {
   assert.deepEqual(runtime.calls.at(-1), {
     method: "observe",
     params: { force: false, include_image: false, include_text_content: true },
-  });
-});
-
-test("phone_observe forwards optional visual grid analysis", async (t) => {
-  const runtime = new FakeRuntime();
-  const handler = createPhoneMcpHandler(runtime);
-  t.after(() => handler.close());
-  const response = await postModern(handler, "tools/call", {
-    name: "phone_observe",
-    arguments: {
-      visual_grid: {
-        rows: 9,
-        columns: 7,
-        bounds: { x: 30, y: 600, w: 1120, h: 1450 },
-      },
-    },
-  });
-  assert.equal(response.status, 200, await response.clone().text());
-  assert.deepEqual(runtime.calls.at(-1), {
-    method: "observe",
-    params: {
-      force: false,
-      include_image: false,
-      include_text_content: false,
-      visual_grid: { rows: 9, columns: 7, bounds: { x: 30, y: 600, w: 1120, h: 1450 } },
-    },
   });
 });
 
