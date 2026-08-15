@@ -336,12 +336,23 @@ class DeviceSelectionTests(unittest.TestCase):
 
     def test_wda_batch_attaches_new_session_to_active_application(self):
         with patch.object(windows, "_ensure_wda_runner"), \
+                patch.object(windows, "_inprocess_supported", return_value=False), \
                 patch.object(windows, "_run_pm3") as run:
             windows._run_wda_batch([{"op": "tap", "selector": "one"}])
         self.assertEqual(
             run.call_args.args[:6],
             ("developer", "wda", "batch", "--attach-active-app", "--wait-for-idle-timeout", 0),
         )
+
+    def test_wda_batch_prefers_inprocess_runtime_on_wifi(self):
+        actions = [{"op": "tap", "selector": "one"}]
+        with patch.object(windows, "_ensure_wda_runner"), \
+                patch.object(windows, "_inprocess_supported", return_value=True), \
+                patch.object(windows, "_inprocess_wda_batch", return_value=True) as run_inprocess, \
+                patch.object(windows, "_run_pm3") as run_cli:
+            windows._run_wda_batch(actions)
+        run_inprocess.assert_called_once_with(actions, timeout=30)
+        run_cli.assert_not_called()
 
     def test_wda_swipe_action_uses_native_direction(self):
         action = windows._wda_action_for_swipe("up", distance=0.4)

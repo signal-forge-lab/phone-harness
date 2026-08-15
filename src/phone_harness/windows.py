@@ -205,6 +205,24 @@ def _inprocess_wda_items(timeout=30):
     return _wda_items_from_source(source)
 
 
+def _inprocess_wda_batch(actions, timeout=30):
+    client = _inprocess_wda_client()
+    if client is None:
+        return False
+
+    async def task():
+        session_id = await client.start_session_for_active_app()
+        await client.set_wait_for_idle_timeout(0, session_id=session_id)
+        await client.run_batch_actions(actions, session_id=session_id)
+        return {"sessionId": session_id, "count": len(actions)}
+
+    try:
+        _run_async(task(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError(f"pymobiledevice3 in-process WDA batch failed: {exc}") from exc
+    return True
+
+
 def _inprocess_get_display_info(timeout=30):
     provider = _inprocess_rsd()
     if provider is None:
@@ -610,6 +628,8 @@ def _run_wda(*args, timeout=30):
 
 def _run_wda_batch(actions, timeout=30):
     _ensure_wda_runner()
+    if _inprocess_supported() and _inprocess_wda_batch(actions, timeout=timeout):
+        return None
     return _run_pm3(
         "developer", "wda", "batch", "--attach-active-app", "--wait-for-idle-timeout", 0,
         timeout=timeout,
