@@ -50,30 +50,13 @@ def _perceptual_hash(image):
     return f"{bits:016x}"
 
 
-def analyze_grid(
-    image_path,
-    *,
-    rows,
-    columns,
-    bounds,
-    inset=0.14,
-    exact_threshold=0.995,
-    min_content_score=6.0,
-):
-    """Analyze a regular visual grid and return strict same-looking groups.
-
-    ``exact_groups`` are deliberately conservative: both color and edge
-    similarity must exceed ``exact_threshold``.  They are visual candidates,
-    not a claim that two objects have the same game semantics or level.
-    """
+def _prepare_grid(image_path, *, rows, columns, bounds, inset):
     if not isinstance(rows, int) or rows < 1 or not isinstance(columns, int) or columns < 1:
         raise ValueError("rows and columns must be positive integers")
     if rows * columns > 400:
         raise ValueError("visual grid may contain at most 400 cells")
     if not 0 <= inset < 0.5:
         raise ValueError("inset must be between 0 and 0.5")
-    if not 0 < exact_threshold <= 1:
-        raise ValueError("exact_threshold must be in (0, 1]")
 
     with Image.open(Path(image_path)) as source:
         image = source.convert("RGB")
@@ -96,19 +79,46 @@ def analyze_grid(
                 right = left + cell_width
                 bottom = top + cell_height
                 crop = _normalized_crop(image, (left, top, right, bottom), inset)
-                content_score = round(sum(ImageStat.Stat(crop).stddev) / 3, 3)
-                cell = {
+                cells.append({
                     "id": f"r{row}c{column}",
                     "row": row,
                     "column": column,
                     "center": [round(left + cell_width / 2, 3), round(top + cell_height / 2, 3)],
                     "visual_signature": _signature(crop),
                     "perceptual_hash": _perceptual_hash(crop),
-                    "content_score": content_score,
-                }
-                cells.append(cell)
+                    "content_score": round(sum(ImageStat.Stat(crop).stddev) / 3, 3),
+                })
                 normalized.append(crop)
                 edges.append(crop.convert("L").filter(ImageFilter.FIND_EDGES))
+
+    return {"x": x, "y": y, "w": width, "h": height}, cells, normalized, edges
+
+
+def analyze_grid(
+    image_path,
+    *,
+    rows,
+    columns,
+    bounds,
+    inset=0.14,
+    exact_threshold=0.995,
+    min_content_score=6.0,
+):
+    """Analyze a regular visual grid and return strict same-looking groups.
+
+    ``exact_groups`` are deliberately conservative: both color and edge
+    similarity must exceed ``exact_threshold``.  They are visual candidates,
+    not a claim that two objects have the same game semantics or level.
+    """
+    if not 0 < exact_threshold <= 1:
+        raise ValueError("exact_threshold must be in (0, 1]")
+    normalized_bounds, cells, normalized, edges = _prepare_grid(
+        image_path,
+        rows=rows,
+        columns=columns,
+        bounds=bounds,
+        inset=inset,
+    )
 
     adjacency = [set() for _ in cells]
     exact_pairs = []
@@ -148,9 +158,62 @@ def analyze_grid(
     return {
         "rows": rows,
         "columns": columns,
-        "bounds": {"x": x, "y": y, "w": width, "h": height},
+        "bounds": normalized_bounds,
         "cells": cells,
         "exact_groups": exact_groups,
         "exact_pairs": exact_pairs,
         "exact_threshold": exact_threshold,
+    }
+
+
+def compare_grid_frames(
+    before_path,
+    after_path,
+    *,
+    rows,
+    columns,
+    bounds,
+    inset=0.14,
+    stable_threshold=0.995,
+):
+    """Return cell-level visual changes without inferring action success."""
+    if not 0 < stable_threshold <= 1:
+        raise ValueError("stable_threshold must be in (0, 1]")
+    normalized_bounds, before_cells, before_images, before_edges = _prepare_grid(
+        before_path, rows=rows, columns=columns, bounds=bounds, inset=inset
+    )
+    _, after_cells, after_images, after_edges = _prepare_grid(
+        after_path, rows=rows, columns=columns, bounds=bounds, inset=inset
+    )
+
+    cells = []
+    changed_cells = []
+    unchanged_cells = []
+    for index, before_cell in enumerate(before_cells):
+        color, edge = _similarity(
+            before_images[index], after_images[index], before_edges[index], after_edges[index]
+        )
+        changed = color < stable_threshold or edge < stable_threshold
+        cell_id = before_cell["id"]
+        cells.append({
+            "id": cell_id,
+            "row": before_cell["row"],
+            "column": before_cell["column"],
+            "center": before_cell["center"],
+            "before_signature": before_cell["visual_signature"],
+            "after_signature": after_cells[index]["visual_signature"],
+            "color_similarity": round(color, 6),
+            "edge_similarity": round(edge, 6),
+            "changed": changed,
+        })
+        (changed_cells if changed else unchanged_cells).append(cell_id)
+
+    return {
+        "rows": rows,
+        "columns": columns,
+        "bounds": normalized_bounds,
+        "cells": cells,
+        "changed_cells": changed_cells,
+        "unchanged_cells": unchanged_cells,
+        "stable_threshold": stable_threshold,
     }

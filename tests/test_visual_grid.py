@@ -4,10 +4,36 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from phone_harness.visual_grid import analyze_grid
+from phone_harness.visual_grid import analyze_grid, compare_grid_frames
 
 
 class VisualGridTests(unittest.TestCase):
+    def test_compare_frames_reports_only_changed_cells(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before_path = Path(directory) / "before.png"
+            after_path = Path(directory) / "after.png"
+            before = Image.new("RGB", (200, 100), "#dddddd")
+            draw = ImageDraw.Draw(before)
+            draw.rectangle((20, 20, 80, 80), fill="#33aa66")
+            draw.rectangle((120, 20, 180, 80), fill="#4477cc")
+            before.save(before_path)
+
+            after = before.copy()
+            ImageDraw.Draw(after).rectangle((120, 20, 180, 80), fill="#cc7744")
+            after.save(after_path)
+
+            result = compare_grid_frames(
+                before_path,
+                after_path,
+                rows=1,
+                columns=2,
+                bounds={"x": 0, "y": 0, "w": 200, "h": 100},
+            )
+
+        self.assertEqual(result["changed_cells"], ["r0c1"])
+        self.assertEqual(result["unchanged_cells"], ["r0c0"])
+        self.assertLess(result["cells"][1]["color_similarity"], result["stable_threshold"])
+
     def test_groups_only_visually_identical_nonempty_cells(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "board.png"
