@@ -20,11 +20,17 @@ test("HTTP boundary publishes OAuth protected-resource metadata and rejects unau
   const fixture = await startFixture();
   t.after(() => fixture.close());
 
-  const metadata = await fetch(`${fixture.base}/.well-known/oauth-protected-resource/mcp`);
+  const metadata = await fetch(`${fixture.base}/.well-known/oauth-protected-resource/v1/mcp/tunnel-test`);
   assert.equal(metadata.status, 200);
   const body = await metadata.json() as { resource?: string; authorization_servers?: string[] };
-  assert.equal(body.resource, "https://phone.example.test:8443/mcp");
+  assert.equal(body.resource, "https://tunnel.example.test/v1/mcp/tunnel-test");
   assert.ok(body.authorization_servers?.includes("https://auth.example.test/phone-auth/"));
+
+  const localMetadata = await fetch(`${fixture.base}/.well-known/oauth-protected-resource/mcp`);
+  assert.equal(localMetadata.status, 200);
+  const localBody = await localMetadata.json() as { resource?: string; authorization_servers?: string[] };
+  assert.equal(localBody.resource, "https://phone.example.test:8443/mcp");
+  assert.ok(localBody.authorization_servers?.includes("https://auth.example.test/phone-auth/"));
 
   const authMetadata = await fetch(`${fixture.base}/.well-known/oauth-authorization-server`);
   assert.equal(authMetadata.status, 200);
@@ -45,7 +51,10 @@ test("HTTP boundary publishes OAuth protected-resource metadata and rejects unau
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} }),
   });
   assert.equal(denied.status, 401);
-  assert.match(denied.headers.get("www-authenticate") ?? "", /resource_metadata/i);
+  assert.match(
+    denied.headers.get("www-authenticate") ?? "",
+    /resource_metadata="https:\/\/tunnel\.example\.test\/\.well-known\/oauth-protected-resource\/v1\/mcp\/tunnel-test"/i,
+  );
 });
 
 test("HTTP boundary rejects an untrusted Origin before OAuth", async (t) => {

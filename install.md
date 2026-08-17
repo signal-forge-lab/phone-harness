@@ -105,6 +105,40 @@ failed device commands clear the cached RSD/device selection; after tunneld
 recovers, the next runtime call re-discovers the phone. This behavior is shared
 by a future dedicated MCP and direct local `PhoneRuntime` use.
 
+#### ChatGPT MCP startup
+
+Do not keep the ChatGPT MCP configuration only in one temporary PowerShell
+session. Configure it once with the repository wrapper:
+
+```powershell
+.\tools\configure_phone_harness_mcp.ps1
+```
+
+On the first run it asks for the OAuth issuer, Secure MCP Tunnel resource URL
+and any Python path it cannot infer. It also asks once for the owner token and
+stores that secret with Windows DPAPI outside the repository. Later Tunnel URL
+changes are configuration changes, not source changes:
+
+```powershell
+.\tools\configure_phone_harness_mcp.ps1 `
+  -OAuthResourceUrl "https://tunnel-service.gateway.unified-0.internal.api.openai.org/v1/mcp/YOUR-TUNNEL-ID"
+```
+
+Normal MCP restart is then one command:
+
+```powershell
+.\tools\start_phone_harness_mcp.ps1
+```
+
+The wrapper builds the MCP, replaces the previous wrapper-managed Node listener,
+verifies `/healthz`, the canonical Secure MCP Tunnel protected-resource
+metadata, the loopback compatibility metadata used by local tunnel diagnostics,
+and the unauthenticated 401 OAuth challenge. If the port is still owned by an
+older manually started Node, stop that process once; the wrapper will not kill
+an unmanaged listener. Only after it prints `READY` should ChatGPT
+scan/reconnect the App.
+
+
 The Windows doctor verifies the dependency stack, selected transport, a connected phone,
 CoreDevice display info, the selected remote-input backend, screenshot capture
 and PP-OCRv6 OCR in that order. iOS 27+ uses native CoreDevice Universal HID.

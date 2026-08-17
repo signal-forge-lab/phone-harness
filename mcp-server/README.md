@@ -73,6 +73,44 @@ also publish RFC 8414 authorization-server metadata at
 `/.well-known/oauth-authorization-server/phone-auth/`. The MCP endpoint itself
 should remain reachable only through the Secure MCP Tunnel.
 
+When `PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL` is set, that Secure MCP Tunnel URL
+is the canonical OAuth protected resource. The MCP publishes the corresponding
+RFC 9728 metadata path and uses it in the unauthenticated `WWW-Authenticate`
+challenge. The local MCP also keeps its ordinary protected-resource metadata
+endpoint as a compatibility route for local tunnel-client diagnostics:
+
+```text
+http://127.0.0.1:17677/.well-known/oauth-protected-resource/mcp
+```
+
+The compatibility route reports the local MCP resource while the canonical
+Tunnel metadata reports `PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL`. The OAuth
+provider accepts both exact resource identifiers; ChatGPT discovery follows the
+canonical Tunnel identity, while `tunnel-client doctor` can continue probing
+the loopback route.
+
+Do not hand-enter the MCP environment on every restart. On Windows, configure
+the machine-local values once and then use the startup wrapper:
+
+```powershell
+.\tools\configure_phone_harness_mcp.ps1
+.\tools\start_phone_harness_mcp.ps1
+```
+
+The configuration wrapper stores non-secret settings under
+`%LOCALAPPDATA%\phone-harness-mcp\config.json` and stores the owner token in a
+separate Windows-DPAPI-encrypted file. The startup wrapper loads those values,
+builds the TypeScript server, replaces only the Node listener previously started
+by the wrapper, then verifies health, canonical Tunnel metadata, local
+compatibility metadata and the 401 OAuth challenge before reporting `READY`.
+If the configured port is still owned by an older manually started process,
+stop that process once; the wrapper deliberately refuses to kill an unmanaged
+listener.
+Use `configure_phone_harness_mcp.ps1 -OAuthResourceUrl <new-url>` when a new
+ChatGPT Secure MCP Tunnel resource URL must be adopted; no source edit is
+required.
+
+
 ## Tailscale Funnel
 
 A legacy whole-MCP Funnel can still be used for direct remote MCP access, but
