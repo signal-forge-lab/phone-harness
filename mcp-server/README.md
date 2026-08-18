@@ -99,10 +99,18 @@ the machine-local values once and then use the startup wrapper:
 
 The configuration wrapper stores non-secret settings under
 `%LOCALAPPDATA%\phone-harness-mcp\config.json` and stores the owner token in a
-separate Windows-DPAPI-encrypted file. The startup wrapper loads those values,
-builds the TypeScript server, replaces only the Node listener previously started
-by the wrapper, then verifies health, canonical Tunnel metadata, local
-compatibility metadata and the 401 OAuth challenge before reporting `READY`.
+separate Windows-DPAPI-encrypted file. It stores only the control-plane API-key
+**environment variable name**, not that API key value. Use
+`-PersistControlPlaneApiKey` once to copy the current process value into the
+Windows User environment so it survives a PC restart. Windows User environment
+variables are stored by Windows and are readable by processes running as that
+user, so use this only for the explicitly requested convenience tradeoff.
+
+The startup wrapper loads those values, builds the TypeScript server, replaces
+only the Node listener previously started by the wrapper, verifies health,
+canonical Tunnel metadata, local compatibility metadata and the 401 OAuth
+challenge, runs `tunnel-client doctor`, and starts/reuses the configured Secure
+MCP Tunnel process before reporting `READY`.
 If the configured port is still owned by an older manually started process,
 stop that process once; the wrapper deliberately refuses to kill an unmanaged
 listener.
@@ -110,6 +118,19 @@ Use `configure_phone_harness_mcp.ps1 -OAuthResourceUrl <new-url>` when a new
 ChatGPT Secure MCP Tunnel resource URL must be adopted; no source edit is
 required.
 
+The verified Windows tunnel-client profile is stored outside this repository at
+`tools/openai-tunnel-client/profiles/phone-harness-mcp.yaml`. It maps the `main`
+channel to `http://127.0.0.1:17677/mcp`, enables Harpoon for the public OAuth
+issuer host, and references the configured environment variable instead of
+containing the API key value. For reboot-safe startup, configure once with:
+
+```powershell
+$env:CONTROL_PLANE_API_KEY = "<runtime API key>"
+.\tools\configure_phone_harness_mcp.ps1 -PersistControlPlaneApiKey
+```
+
+After that, `start_phone_harness_mcp.ps1` owns the normal `doctor`/`run` flow.
+No API key value is written to the repository or MCP JSON configuration.
 
 ## Tailscale Funnel
 

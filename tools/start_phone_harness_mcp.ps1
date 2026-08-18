@@ -11,6 +11,7 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'phone-harness-mcp'
 $configPath = Join-Path $stateDir 'config.json'
 $secretPath = Join-Path $stateDir 'owner-token.dpapi'
 $pidPath = Join-Path $stateDir 'mcp.pid'
+$tunnelPidPath = Join-Path $stateDir 'tunnel-client.pid'
 if (-not (Test-Path $configPath) -or -not (Test-Path $secretPath)) {
     throw 'MCP configuration is missing. Run tools\configure_phone_harness_mcp.ps1 first.'
 }
@@ -25,6 +26,25 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $mcpDir = Join-Path $repoRoot 'mcp-server'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+$tunnelClientPath = [string]$config.tunnelClientPath
+$tunnelProfilePath = [string]$config.tunnelProfilePath
+$controlPlaneApiKeyEnvName = [string]$config.controlPlaneApiKeyEnvName
+if (-not $tunnelClientPath -or -not $tunnelProfilePath -or -not $controlPlaneApiKeyEnvName) {
+    throw 'Tunnel startup configuration is missing. Run tools\configure_phone_harness_mcp.ps1 once to migrate the configuration.'
+}
+if (-not (Test-Path $tunnelClientPath -PathType Leaf)) { throw "Configured tunnel-client executable not found: $tunnelClientPath" }
+if (-not (Test-Path $tunnelProfilePath -PathType Leaf)) { throw "Configured tunnel-client profile not found: $tunnelProfilePath" }
+$controlPlaneApiKey = [Environment]::GetEnvironmentVariable($controlPlaneApiKeyEnvName, 'Process')
+if (-not $controlPlaneApiKey) { $controlPlaneApiKey = [Environment]::GetEnvironmentVariable($controlPlaneApiKeyEnvName, 'User') }
+if (-not $controlPlaneApiKey) { $controlPlaneApiKey = [Environment]::GetEnvironmentVariable($controlPlaneApiKeyEnvName, 'Machine') }
+if (-not $controlPlaneApiKey) {
+    throw "Control-plane API key environment variable is missing: $controlPlaneApiKeyEnvName. Persist it with tools\configure_phone_harness_mcp.ps1 -PersistControlPlaneApiKey."
+}
+[Environment]::SetEnvironmentVariable($controlPlaneApiKeyEnvName, $controlPlaneApiKey, 'Process')
+$profileText = Get-Content $tunnelProfilePath -Raw
+if ($profileText -notmatch [regex]::Escape("env:$controlPlaneApiKeyEnvName")) {
+    throw "Tunnel profile does not reference env:$controlPlaneApiKeyEnvName"
+}
 
 $env:PHONE_HARNESS_MCP_PUBLIC_BASE_URL = [string]$config.publicBaseUrl
 $env:PHONE_HARNESS_MCP_OAUTH_ISSUER_URL = [string]$config.oauthIssuerUrl
@@ -61,6 +81,9 @@ if ($listener) {
 
 $process = Start-Process -FilePath $node -ArgumentList 'dist/index.js' -WorkingDirectory $mcpDir -PassThru
 $process.Id | Set-Content $pidPath -Encoding ascii
+$startedTunnelProcess = $null
+$tunnelProcess = $null
+$tunnelMode = $null
 
 try {
 $localBase = "http://127.0.0.1:$port"
@@ -116,7 +139,53 @@ $challenge = [string]$denied.Headers['WWW-Authenticate']
 if ($challenge -notlike "*resource_metadata=`"$externalMetadataUrl`"*") {
     throw "OAuth challenge does not advertise canonical resource metadata: $challenge"
 }
+
+$doctorOutput = (& $tunnelClientPath doctor --profile-file $tunnelProfilePath --explain 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Secure MCP Tunnel doctor failed.`n$doctorOutput"
+}
+
+$matchingTunnel = Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -eq $tunnelClientPath -and $_.CommandLine -like "*$tunnelProfilePath*" } |
+    Select-Object -First 1
+$managedTunnelPid = if (Test-Path $tunnelPidPath) { [int](Get-Content $tunnelPidPath -Raw).Trim() } else { 0 }
+if ($matchingTunnel -and $managedTunnelPid -eq $matchingTunnel.ProcessId) {
+    Stop-Process -Id $matchingTunnel.ProcessId -Force
+    Start-Sleep -Milliseconds 500
+    $matchingTunnel = $null
+} elseif (-not $matchingTunnel -and (Test-Path $tunnelPidPath)) {
+    Remove-Item $tunnelPidPath -Force
+}
+
+if ($matchingTunnel) {
+    $tunnelProcess = Get-Process -Id $matchingTunnel.ProcessId -ErrorAction Stop
+    $tunnelMode = 'reused existing process'
+} else {
+    $logDir = Join-Path $stateDir 'logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $stdoutPath = Join-Path $logDir 'tunnel-client.stdout.log'
+    $stderrPath = Join-Path $logDir 'tunnel-client.stderr.log'
+    $startedTunnelProcess = Start-Process `
+        -FilePath $tunnelClientPath `
+        -ArgumentList @('run', '--profile-file', "`"$tunnelProfilePath`"") `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath `
+        -PassThru
+    $startedTunnelProcess.Id | Set-Content $tunnelPidPath -Encoding ascii
+    Start-Sleep -Seconds 2
+    $tunnelProcess = Get-Process -Id $startedTunnelProcess.Id -ErrorAction SilentlyContinue
+    if (-not $tunnelProcess) {
+        $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join "`n" } else { '' }
+        throw "Secure MCP Tunnel client exited during startup.`n$stderr"
+    }
+    $tunnelMode = 'started by wrapper'
+}
 } catch {
+    if ($startedTunnelProcess) {
+        Stop-Process -Id $startedTunnelProcess.Id -Force -ErrorAction SilentlyContinue
+        Remove-Item $tunnelPidPath -Force -ErrorAction SilentlyContinue
+    }
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
     throw
@@ -127,4 +196,6 @@ Write-Host "healthz                 PASS  $localBase/healthz"
 Write-Host "canonical OAuth metadata PASS  $externalMetadataUrl"
 Write-Host "local OAuth compatibility PASS $($localResource.AbsoluteUri)"
 Write-Host '401 OAuth challenge       PASS'
+Write-Host "Secure MCP tunnel doctor PASS  env:$controlPlaneApiKeyEnvName"
+Write-Host "Secure MCP tunnel client PASS  PID $($tunnelProcess.Id) ($tunnelMode)"
 Write-Host 'READY: ChatGPT can now scan/reconnect the MCP App.'

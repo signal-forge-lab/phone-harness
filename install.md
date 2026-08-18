@@ -133,11 +133,25 @@ Normal MCP restart is then one command:
 The wrapper builds the MCP, replaces the previous wrapper-managed Node listener,
 verifies `/healthz`, the canonical Secure MCP Tunnel protected-resource
 metadata, the loopback compatibility metadata used by local tunnel diagnostics,
-and the unauthenticated 401 OAuth challenge. If the port is still owned by an
-older manually started Node, stop that process once; the wrapper will not kill
-an unmanaged listener. Only after it prints `READY` should ChatGPT
-scan/reconnect the App.
+the unauthenticated 401 OAuth challenge, `tunnel-client doctor`, and the Secure
+MCP Tunnel runtime. If the port is still owned by an older manually started
+Node, stop that process once; the wrapper will not kill an unmanaged listener.
+Only after it prints `READY` should ChatGPT scan/reconnect the App.
 
+For PC-reboot-safe Tunnel startup, keep the API key value out of the JSON
+configuration and store only its environment-variable name there. Persist the
+current value once in the Windows User environment:
+
+```powershell
+$env:CONTROL_PLANE_API_KEY = "<runtime API key>"
+.\tools\configure_phone_harness_mcp.ps1 -PersistControlPlaneApiKey
+```
+
+The resulting config contains `controlPlaneApiKeyEnvName` plus the tunnel-client
+executable/profile paths; it never contains the API key value. Windows User
+environment variables are readable by processes running as that Windows user,
+which is the intentional convenience/security tradeoff requested for reboot
+startup.
 
 The Windows doctor verifies the dependency stack, selected transport, a connected phone,
 CoreDevice display info, the selected remote-input backend, screenshot capture
