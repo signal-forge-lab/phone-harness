@@ -133,47 +133,90 @@ if ($challenge -notlike "*resource_metadata=`"$localMetadataUrl`"*") {
     throw "OAuth challenge does not advertise local resource metadata: $challenge"
 }
 
+function Get-ConfiguredTunnelProcesses {
+    $matches = @()
+    $candidates = Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction SilentlyContinue
+    foreach ($candidate in $candidates) {
+        $isMatch = $candidate.ExecutablePath -eq $tunnelClientPath -and
+            $candidate.CommandLine -like "*$tunnelProfilePath*"
+        if (-not $isMatch) {
+            $listeners = Get-NetTCPConnection -OwningProcess $candidate.ProcessId -State Listen -ErrorAction SilentlyContinue |
+                Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1') }
+            foreach ($listener in $listeners) {
+                try {
+                    $oauthState = Invoke-RestMethod "http://127.0.0.1:$($listener.LocalPort)/api/oauth" -TimeoutSec 1
+                    if (@($oauthState.discovery_urls).Contains($localMetadataUrl) -or
+                        [string]$oauthState.metadata.body.resource -eq $localResource.AbsoluteUri) {
+                        $isMatch = $true
+                        break
+                    }
+                } catch {
+                    continue
+                }
+            }
+        }
+        if ($isMatch) { $matches += $candidate }
+    }
+    return @($matches)
+}
+
 $doctorOutput = (& $tunnelClientPath doctor --profile-file $tunnelProfilePath --explain 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) {
     throw "Secure MCP Tunnel doctor failed.`n$doctorOutput"
 }
 
-$matchingTunnel = Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.ExecutablePath -eq $tunnelClientPath -and $_.CommandLine -like "*$tunnelProfilePath*" } |
-    Select-Object -First 1
-$managedTunnelPid = if (Test-Path $tunnelPidPath) { [int](Get-Content $tunnelPidPath -Raw).Trim() } else { 0 }
-if ($matchingTunnel -and $managedTunnelPid -eq $matchingTunnel.ProcessId) {
-    Stop-Process -Id $matchingTunnel.ProcessId -Force
-    Start-Sleep -Milliseconds 500
-    $matchingTunnel = $null
-} elseif (-not $matchingTunnel -and (Test-Path $tunnelPidPath)) {
-    Remove-Item $tunnelPidPath -Force
-}
-
-if ($matchingTunnel) {
-    $tunnelProcess = Get-Process -Id $matchingTunnel.ProcessId -ErrorAction Stop
-    $tunnelMode = 'reused existing process'
-} else {
-    $logDir = Join-Path $stateDir 'logs'
-    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-    $stdoutPath = Join-Path $logDir 'tunnel-client.stdout.log'
-    $stderrPath = Join-Path $logDir 'tunnel-client.stderr.log'
-    $startedTunnelProcess = Start-Process `
-        -FilePath $tunnelClientPath `
-        -ArgumentList @('run', '--profile-file', "`"$tunnelProfilePath`"") `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -PassThru
-    $startedTunnelProcess.Id | Set-Content $tunnelPidPath -Encoding ascii
-    Start-Sleep -Seconds 2
-    $tunnelProcess = Get-Process -Id $startedTunnelProcess.Id -ErrorAction SilentlyContinue
-    if (-not $tunnelProcess) {
-        $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join "`n" } else { '' }
-        throw "Secure MCP Tunnel client exited during startup.`n$stderr"
+$staleTunnelProcesses = @(Get-ConfiguredTunnelProcesses)
+$elevatedStopIds = @()
+foreach ($candidate in $staleTunnelProcesses) {
+    try {
+        Stop-Process -Id $candidate.ProcessId -Force -ErrorAction Stop
+    } catch {
+        $elevatedStopIds += [int]$candidate.ProcessId
     }
-    $tunnelMode = 'started by wrapper'
 }
+if ($elevatedStopIds.Count -gt 0) {
+    $helper = Join-Path $PSScriptRoot 'manage_phone_harness_tunnel_client.ps1'
+    $argumentList = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', "`"$helper`"",
+        '-ProcessIds', "`"$($elevatedStopIds -join ',')`""
+    )
+    try {
+        $null = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentList -PassThru
+    } catch {
+        throw "Administrator approval to remove stale Secure MCP Tunnel processes was cancelled or failed: $($_.Exception.Message)"
+    }
+}
+for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    if (@(Get-ConfiguredTunnelProcesses).Count -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+}
+$remainingTunnelProcesses = @(Get-ConfiguredTunnelProcesses)
+if ($remainingTunnelProcesses.Count -gt 0) {
+    throw "Stale Secure MCP Tunnel processes are still running: $($remainingTunnelProcesses.ProcessId -join ', ')"
+}
+Remove-Item $tunnelPidPath -Force -ErrorAction SilentlyContinue
+
+$logDir = Join-Path $stateDir 'logs'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$stdoutPath = Join-Path $logDir 'tunnel-client.stdout.log'
+$stderrPath = Join-Path $logDir 'tunnel-client.stderr.log'
+$startedTunnelProcess = Start-Process `
+    -FilePath $tunnelClientPath `
+    -ArgumentList @('run', '--profile-file', "`"$tunnelProfilePath`"") `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $stdoutPath `
+    -RedirectStandardError $stderrPath `
+    -PassThru
+$startedTunnelProcess.Id | Set-Content $tunnelPidPath -Encoding ascii
+Start-Sleep -Seconds 2
+$tunnelProcess = Get-Process -Id $startedTunnelProcess.Id -ErrorAction SilentlyContinue
+if (-not $tunnelProcess) {
+    $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join "`n" } else { '' }
+    throw "Secure MCP Tunnel client exited during startup.`n$stderr"
+}
+$tunnelMode = 'started by wrapper'
 
 $tunnelHealthUrl = $null
 for ($attempt = 0; $attempt -lt 40; $attempt++) {
@@ -211,6 +254,10 @@ if (-not $ready -or $ready.StatusCode -ne 200) {
     }
     throw "Secure MCP Tunnel is live but not ready. /readyz: $lastReadyBody`nOAuth diagnostics:`n$oauthDiagnostic"
 }
+$activeTunnelProcesses = @(Get-ConfiguredTunnelProcesses)
+if ($activeTunnelProcesses.Count -ne 1 -or $activeTunnelProcesses[0].ProcessId -ne $tunnelProcess.Id) {
+    throw "Expected exactly one configured Secure MCP Tunnel process after startup; found: $($activeTunnelProcesses.ProcessId -join ', ')"
+}
 } catch {
     if ($startedTunnelProcess) {
         Stop-Process -Id $startedTunnelProcess.Id -Force -ErrorAction SilentlyContinue
@@ -227,5 +274,6 @@ Write-Host "local OAuth metadata      PASS  $localMetadataUrl"
 Write-Host '401 OAuth challenge       PASS'
 Write-Host "Secure MCP tunnel doctor PASS  env:$controlPlaneApiKeyEnvName"
 Write-Host "Secure MCP tunnel client PASS  PID $($tunnelProcess.Id) ($tunnelMode)"
+Write-Host 'Secure MCP tunnel singleton PASS  exactly 1 configured process'
 Write-Host "Secure MCP tunnel ready  PASS  $tunnelHealthUrl/readyz"
 Write-Host 'READY: ChatGPT can now scan/reconnect the MCP App.'
