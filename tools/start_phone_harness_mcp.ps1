@@ -108,21 +108,14 @@ function Get-ProtectedResourceMetadataPath([Uri]$Resource) {
     return "/.well-known/oauth-protected-resource$path"
 }
 
-$canonicalResource = [Uri][string]$config.oauthResourceUrl
-$canonicalPath = Get-ProtectedResourceMetadataPath $canonicalResource
-$canonicalMetadata = Invoke-RestMethod "$localBase$canonicalPath" -TimeoutSec 5
-if ([string]$canonicalMetadata.resource -ne $canonicalResource.AbsoluteUri) {
-    throw "Canonical OAuth resource mismatch: $($canonicalMetadata.resource)"
-}
-if (-not @($canonicalMetadata.authorization_servers).Contains(([Uri][string]$config.oauthIssuerUrl).AbsoluteUri)) {
-    throw 'Canonical OAuth metadata does not advertise the configured authorization server.'
-}
-
 $localResource = [Uri]::new([Uri][string]$config.publicBaseUrl, '/mcp')
 $localPath = Get-ProtectedResourceMetadataPath $localResource
 $localMetadata = Invoke-RestMethod "$localBase$localPath" -TimeoutSec 5
 if ([string]$localMetadata.resource -ne $localResource.AbsoluteUri) {
-    throw "Local compatibility OAuth resource mismatch: $($localMetadata.resource)"
+    throw "Local OAuth resource mismatch: $($localMetadata.resource)"
+}
+if (-not @($localMetadata.authorization_servers).Contains(([Uri][string]$config.oauthIssuerUrl).AbsoluteUri)) {
+    throw 'Local OAuth metadata does not advertise the configured authorization server.'
 }
 
 $denied = Invoke-WebRequest "$localBase/mcp" `
@@ -134,10 +127,10 @@ $denied = Invoke-WebRequest "$localBase/mcp" `
     -TimeoutSec 5
 if ($denied.StatusCode -ne 401) { throw "Expected unauthenticated MCP request to return 401, got $($denied.StatusCode)." }
 
-$externalMetadataUrl = "{0}://{1}{2}" -f $canonicalResource.Scheme, $canonicalResource.Authority, $canonicalPath
+$localMetadataUrl = "{0}://{1}{2}" -f $localResource.Scheme, $localResource.Authority, $localPath
 $challenge = [string]$denied.Headers['WWW-Authenticate']
-if ($challenge -notlike "*resource_metadata=`"$externalMetadataUrl`"*") {
-    throw "OAuth challenge does not advertise canonical resource metadata: $challenge"
+if ($challenge -notlike "*resource_metadata=`"$localMetadataUrl`"*") {
+    throw "OAuth challenge does not advertise local resource metadata: $challenge"
 }
 
 $doctorOutput = (& $tunnelClientPath doctor --profile-file $tunnelProfilePath --explain 2>&1 | Out-String).Trim()
@@ -181,6 +174,43 @@ if ($matchingTunnel) {
     }
     $tunnelMode = 'started by wrapper'
 }
+
+$tunnelHealthUrl = $null
+for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    $healthListener = Get-NetTCPConnection -OwningProcess $tunnelProcess.Id -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1') } |
+        Select-Object -First 1
+    if ($healthListener) {
+        $tunnelHealthUrl = "http://127.0.0.1:$($healthListener.LocalPort)"
+        break
+    }
+    Start-Sleep -Milliseconds 250
+}
+if (-not $tunnelHealthUrl) {
+    throw 'Secure MCP Tunnel health listener did not become available.'
+}
+
+$ready = $null
+$lastReadyBody = ''
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    try {
+        $ready = Invoke-WebRequest "$tunnelHealthUrl/readyz" -SkipHttpErrorCheck -TimeoutSec 2
+        $lastReadyBody = [string]$ready.Content
+        if ($ready.StatusCode -eq 200) { break }
+    } catch {
+        $lastReadyBody = $_.Exception.Message
+    }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $ready -or $ready.StatusCode -ne 200) {
+    $oauthDiagnostic = ''
+    try {
+        $oauthDiagnostic = Invoke-RestMethod "$tunnelHealthUrl/api/oauth" -TimeoutSec 2 | ConvertTo-Json -Depth 8
+    } catch {
+        $oauthDiagnostic = $_.Exception.Message
+    }
+    throw "Secure MCP Tunnel is live but not ready. /readyz: $lastReadyBody`nOAuth diagnostics:`n$oauthDiagnostic"
+}
 } catch {
     if ($startedTunnelProcess) {
         Stop-Process -Id $startedTunnelProcess.Id -Force -ErrorAction SilentlyContinue
@@ -193,9 +223,9 @@ if ($matchingTunnel) {
 
 Write-Host "phone-harness MCP PID = $($process.Id)"
 Write-Host "healthz                 PASS  $localBase/healthz"
-Write-Host "canonical OAuth metadata PASS  $externalMetadataUrl"
-Write-Host "local OAuth compatibility PASS $($localResource.AbsoluteUri)"
+Write-Host "local OAuth metadata      PASS  $localMetadataUrl"
 Write-Host '401 OAuth challenge       PASS'
 Write-Host "Secure MCP tunnel doctor PASS  env:$controlPlaneApiKeyEnvName"
 Write-Host "Secure MCP tunnel client PASS  PID $($tunnelProcess.Id) ($tunnelMode)"
+Write-Host "Secure MCP tunnel ready  PASS  $tunnelHealthUrl/readyz"
 Write-Host 'READY: ChatGPT can now scan/reconnect the MCP App.'

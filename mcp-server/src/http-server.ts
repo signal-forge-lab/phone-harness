@@ -13,8 +13,7 @@ export function createHttpServer(config: McpConfig, runtime: RuntimeBridge) {
   const publicBase = new URL(config.publicBaseUrl);
   const oauthIssuer = new URL(config.oauthIssuerUrl ?? config.publicBaseUrl);
   const mcpUrl = new URL("/mcp", publicBase);
-  const localResourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
-  const resourceServerUrl = resourceUrlFromServerUrl(config.oauthResourceUrl ? new URL(config.oauthResourceUrl) : mcpUrl);
+  const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const allowedHosts = Array.from(new Set([publicBase.hostname, oauthIssuer.hostname, "127.0.0.1", "localhost"]));
   const app = createMcpExpressApp({ host: config.host, allowedHosts });
   app.set("trust proxy", "loopback");
@@ -74,15 +73,6 @@ export function createHttpServer(config: McpConfig, runtime: RuntimeBridge) {
     revocation_endpoint: generatedOAuthMetadata.revocation_endpoint ? new URL("revoke", oauthIssuer).href : undefined,
   };
   app.get("/.well-known/oauth-authorization-server", (_req, res) => res.json(oauthMetadata));
-  if (resourceServerUrl.href !== localResourceServerUrl.href) {
-    const localMetadataPath = new URL(getOAuthProtectedResourceMetadataUrl(localResourceServerUrl)).pathname;
-    app.get(localMetadataPath, (_req, res) => res.json({
-      resource: localResourceServerUrl.href,
-      authorization_servers: [oauthIssuer.href],
-      scopes_supported: ["phone"],
-      resource_name: "phone-harness",
-    }));
-  }
   app.use(mcpAuthRouter(oauthOptions));
 
   app.get("/healthz", (_req, res) => res.json({ ok: true, name: "phone-harness-mcp" }));

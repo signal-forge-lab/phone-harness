@@ -73,21 +73,19 @@ also publish RFC 8414 authorization-server metadata at
 `/.well-known/oauth-authorization-server/phone-auth/`. The MCP endpoint itself
 should remain reachable only through the Secure MCP Tunnel.
 
-When `PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL` is set, that Secure MCP Tunnel URL
-is the canonical OAuth protected resource. The MCP publishes the corresponding
-RFC 9728 metadata path and uses it in the unauthenticated `WWW-Authenticate`
-challenge. The local MCP also keeps its ordinary protected-resource metadata
-endpoint as a compatibility route for local tunnel-client diagnostics:
+The local MCP must keep its own loopback MCP URL as the RFC 9728 protected
+resource and use the local metadata URL in its unauthenticated
+`WWW-Authenticate` challenge:
 
 ```text
 http://127.0.0.1:17677/.well-known/oauth-protected-resource/mcp
 ```
 
-The compatibility route reports the local MCP resource while the canonical
-Tunnel metadata reports `PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL`. The OAuth
-provider accepts both exact resource identifiers; ChatGPT discovery follows the
-canonical Tunnel identity, while `tunnel-client doctor` can continue probing
-the loopback route.
+`PHONE_HARNESS_MCP_OAUTH_RESOURCE_URL` remains an additional exact OAuth
+audience accepted by the provider, but the local MCP does not publish that
+internal Tunnel URL as its own protected-resource metadata. `tunnel-client`
+discovers the loopback metadata and rewrites the protected-resource identity and
+`resource_metadata` URL to the OpenAI Tunnel identity for the remote product.
 
 Do not hand-enter the MCP environment on every restart. On Windows, configure
 the machine-local values once and then use the startup wrapper:
@@ -107,10 +105,10 @@ variables are stored by Windows and are readable by processes running as that
 user, so use this only for the explicitly requested convenience tradeoff.
 
 The startup wrapper loads those values, builds the TypeScript server, replaces
-only the Node listener previously started by the wrapper, verifies health,
-canonical Tunnel metadata, local compatibility metadata and the 401 OAuth
-challenge, runs `tunnel-client doctor`, and starts/reuses the configured Secure
-MCP Tunnel process before reporting `READY`.
+only the Node listener previously started by the wrapper, verifies local
+protected-resource metadata and the 401 OAuth challenge, runs `tunnel-client
+doctor`, starts/reuses the configured Secure MCP Tunnel process, then waits for
+the tunnel-client `/readyz` endpoint to return `200` before reporting `READY`.
 If the configured port is still owned by an older manually started process,
 stop that process once; the wrapper deliberately refuses to kill an unmanaged
 listener.

@@ -144,12 +144,14 @@ elevation. `stop_phone_harness.ps1` stops the managed Secure MCP Tunnel, MCP,
 and tunneld in reverse order; it requests elevation only for the tunneld stop.
 
 The wrapper builds the MCP, replaces the previous wrapper-managed Node listener,
-verifies `/healthz`, the canonical Secure MCP Tunnel protected-resource
-metadata, the loopback compatibility metadata used by local tunnel diagnostics,
-the unauthenticated 401 OAuth challenge, `tunnel-client doctor`, and the Secure
-MCP Tunnel runtime. If the port is still owned by an older manually started
-Node, stop that process once; the wrapper will not kill an unmanaged listener.
-Only after it prints `READY` should ChatGPT scan/reconnect the App.
+verifies `/healthz`, the loopback protected-resource metadata and the
+unauthenticated 401 OAuth challenge, runs `tunnel-client doctor`, starts the
+Secure MCP Tunnel runtime, and waits for tunnel-client `/readyz` to return
+`200`. The local MCP advertises its local resource; tunnel-client rewrites that
+metadata to the OpenAI Tunnel identity for ChatGPT. If the port is still owned
+by an older manually started Node, stop that process once; the wrapper will not
+kill an unmanaged listener. Only after it prints `READY` should ChatGPT
+scan/reconnect the App.
 
 For PC-reboot-safe Tunnel startup, keep the API key value out of the JSON
 configuration and store only its environment-variable name there. Persist the
