@@ -130,6 +130,19 @@ Normal MCP restart is then one command:
 .\tools\start_phone_harness_mcp.ps1
 ```
 
+For normal phone-harness operation, including the elevated pymobiledevice3
+`tunneld`, use the top-level lifecycle commands instead:
+
+```powershell
+.\tools\start_phone_harness.ps1
+.\tools\stop_phone_harness.ps1
+```
+
+`start_phone_harness.ps1` starts or adopts the local pymobiledevice3 tunneld,
+then starts the MCP and Secure MCP Tunnel. Only the tunneld step requests UAC
+elevation. `stop_phone_harness.ps1` stops the managed Secure MCP Tunnel, MCP,
+and tunneld in reverse order; it requests elevation only for the tunneld stop.
+
 The wrapper builds the MCP, replaces the previous wrapper-managed Node listener,
 verifies `/healthz`, the canonical Secure MCP Tunnel protected-resource
 metadata, the loopback compatibility metadata used by local tunnel diagnostics,

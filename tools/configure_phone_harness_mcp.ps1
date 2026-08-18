@@ -5,6 +5,8 @@ param(
     [string]$OAuthResourceUrl,
     [int]$Port,
     [string]$PythonPath,
+    [string]$TunneldPythonPath,
+    [int]$TunneldPort,
     [string]$TunnelClientPath,
     [string]$TunnelProfilePath,
     [string]$ControlPlaneApiKeyEnvName,
@@ -47,6 +49,8 @@ function Select-Value {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $defaultPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $defaultPython)) { $defaultPython = $null }
+$defaultTunneldPython = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Intelligence Works\products\phone-harness-windows\.venv-tunneld\Scripts\python.exe'
+if (-not (Test-Path $defaultTunneldPython)) { $defaultTunneldPython = $null }
 $defaultTunnelRoot = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Intelligence Works\tools\openai-tunnel-client'
 $defaultTunnelClient = Join-Path $defaultTunnelRoot 'tunnel-client.exe'
 $defaultTunnelProfile = Join-Path $defaultTunnelRoot 'profiles\phone-harness-mcp.yaml'
@@ -58,6 +62,8 @@ $resolvedOAuthIssuerUrl = Select-Value $OAuthIssuerUrl $existing.oauthIssuerUrl 
 $resolvedOAuthResourceUrl = Select-Value $OAuthResourceUrl $existing.oauthResourceUrl $null 'Secure MCP Tunnel resource URL'
 $resolvedPort = if ($PSBoundParameters.ContainsKey('Port')) { $Port } elseif ($existing.port) { [int]$existing.port } else { 17677 }
 $resolvedPythonPath = Select-Value $PythonPath $existing.pythonPath $defaultPython 'phone-harness Python executable'
+$resolvedTunneldPythonPath = Select-Value $TunneldPythonPath $existing.tunneldPythonPath $defaultTunneldPython 'pymobiledevice3 tunneld Python executable'
+$resolvedTunneldPort = if ($PSBoundParameters.ContainsKey('TunneldPort')) { $TunneldPort } elseif ($existing.tunneldPort) { [int]$existing.tunneldPort } else { 49151 }
 $resolvedTunnelClientPath = Select-Value $TunnelClientPath $existing.tunnelClientPath $defaultTunnelClient 'tunnel-client executable'
 $resolvedTunnelProfilePath = Select-Value $TunnelProfilePath $existing.tunnelProfilePath $defaultTunnelProfile 'tunnel-client profile'
 $resolvedControlPlaneApiKeyEnvName = if ($ControlPlaneApiKeyEnvName) {
@@ -71,6 +77,8 @@ $resolvedTransport = if ($Transport) { $Transport } elseif ($existing.transport)
 
 if ($resolvedPort -lt 1 -or $resolvedPort -gt 65535) { throw 'Port must be between 1 and 65535.' }
 if (-not (Test-Path $resolvedPythonPath -PathType Leaf)) { throw "Python executable not found: $resolvedPythonPath" }
+if (-not (Test-Path $resolvedTunneldPythonPath -PathType Leaf)) { throw "tunneld Python executable not found: $resolvedTunneldPythonPath" }
+if ($resolvedTunneldPort -lt 1 -or $resolvedTunneldPort -gt 65535) { throw 'TunneldPort must be between 1 and 65535.' }
 if (-not (Test-Path $resolvedTunnelClientPath -PathType Leaf)) { throw "tunnel-client executable not found: $resolvedTunnelClientPath" }
 if (-not (Test-Path $resolvedTunnelProfilePath -PathType Leaf)) { throw "tunnel-client profile not found: $resolvedTunnelProfilePath" }
 if ($resolvedControlPlaneApiKeyEnvName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
@@ -115,6 +123,8 @@ if ($PersistControlPlaneApiKey) {
     oauthResourceUrl = ([Uri]$resolvedOAuthResourceUrl).AbsoluteUri
     port = $resolvedPort
     pythonPath = (Resolve-Path $resolvedPythonPath).Path
+    tunneldPythonPath = (Resolve-Path $resolvedTunneldPythonPath).Path
+    tunneldPort = $resolvedTunneldPort
     tunnelClientPath = (Resolve-Path $resolvedTunnelClientPath).Path
     tunnelProfilePath = (Resolve-Path $resolvedTunnelProfilePath).Path
     controlPlaneApiKeyEnvName = $resolvedControlPlaneApiKeyEnvName
@@ -128,4 +138,4 @@ if ([Environment]::GetEnvironmentVariable($resolvedControlPlaneApiKeyEnvName, 'U
 } else {
     Write-Warning "$resolvedControlPlaneApiKeyEnvName is not persisted in the Windows User environment. PC-reboot startup will require it; rerun with -PersistControlPlaneApiKey."
 }
-Write-Host 'Run tools\start_phone_harness_mcp.ps1 to build, restart, and verify the MCP.'
+Write-Host 'Run tools\start_phone_harness.ps1 for the complete phone-harness stack.'

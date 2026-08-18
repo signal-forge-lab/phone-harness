@@ -132,6 +132,18 @@ $env:CONTROL_PLANE_API_KEY = "<runtime API key>"
 After that, `start_phone_harness_mcp.ps1` owns the normal `doctor`/`run` flow.
 No API key value is written to the repository or MCP JSON configuration.
 
+For the complete local phone-harness lifecycle, including the administrator-
+privileged pymobiledevice3 tunneld, use:
+
+```powershell
+.\tools\start_phone_harness.ps1
+.\tools\stop_phone_harness.ps1
+```
+
+The top-level start command brings up/adopts tunneld first and then delegates to
+`start_phone_harness_mcp.ps1`. The top-level stop command stops the managed
+Secure MCP Tunnel and Node MCP first, then elevates only the tunneld stop.
+
 ## Tailscale Funnel
 
 A legacy whole-MCP Funnel can still be used for direct remote MCP access, but
