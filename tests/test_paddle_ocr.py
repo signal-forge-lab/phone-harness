@@ -1,4 +1,8 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from PIL import Image
 
 from phone_harness import paddle_ocr
 
@@ -34,6 +38,30 @@ class PaddleResultTests(unittest.TestCase):
             paddle_ocr.normalize_result(result, (100, 100), {"x": 0, "y": 0, "w": 100, "h": 100}),
             [],
         )
+
+    def test_inference_image_downscales_large_screenshot_to_safe_long_edge(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "screen.png"
+            Image.new("RGB", (1206, 2622), "white").save(source)
+
+            with paddle_ocr._inference_image(source) as prepared:
+                self.assertNotEqual(prepared, source)
+                with Image.open(prepared) as image:
+                    self.assertEqual(image.size, (736, 1600))
+                prepared_path = prepared
+
+            self.assertFalse(prepared_path.exists())
+            self.assertTrue(source.exists())
+
+    def test_inference_image_keeps_small_screenshot_without_temp_copy(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "screen.png"
+            Image.new("RGB", (800, 1200), "white").save(source)
+
+            with paddle_ocr._inference_image(source) as prepared:
+                self.assertEqual(prepared, source)
+
+            self.assertTrue(source.exists())
 
 
 if __name__ == "__main__":

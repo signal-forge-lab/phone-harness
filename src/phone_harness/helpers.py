@@ -8,6 +8,8 @@ CoreDevice backend and should stay within its explicit helpers.
 import hashlib, importlib, importlib.util, os, sys, time
 from pathlib import Path
 
+from .frame import FrameBroker
+
 _WINDOWS = sys.platform == "win32"
 if _WINDOWS:
     from . import paddle_ocr as _ocr
@@ -36,6 +38,8 @@ press = mirror.press
 type_text = mirror.type_text
 activate = mirror.activate
 find_window = mirror.find_window
+
+_FRAME_BROKER = FrameBroker(lambda: mirror.capture())
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
@@ -123,11 +127,75 @@ def screen_info():
     return {"window": win, "frontmost": mirror.is_frontmost(), "img_px": [w, h]}
 
 
-def screenshot(path=None):
+def capture_frame():
+    """Capture one reusable screen frame for a single observation pipeline."""
+    return _FRAME_BROKER.capture()
+
+
+def frame_source_name():
+    """Return the privacy-safe name of the current visual frame source."""
+    return _FRAME_BROKER.source_name
+
+
+def normalize_region(region):
+    """Validate and normalize an absolute screen-pixel rectangle."""
+    if not isinstance(region, dict):
+        raise ValueError("region must be an object with x, y, w and h")
+    values = {}
+    for key in ("x", "y", "w", "h"):
+        value = region.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"region {key} must be numeric")
+        values[key] = float(value)
+    if values["w"] <= 0 or values["h"] <= 0:
+        raise ValueError("region width and height must be positive")
+    win = _win()
+    if (
+        values["x"] < win["x"]
+        or values["y"] < win["y"]
+        or values["x"] + values["w"] > win["x"] + win["w"]
+        or values["y"] + values["h"] > win["y"] + win["h"]
+    ):
+        raise ValueError("region must fit inside the phone screen")
+    return values
+
+
+def _in_region(item, region):
+    try:
+        x = float(item["x"])
+        y = float(item["y"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        region["x"] <= x <= region["x"] + region["w"]
+        and region["y"] <= y <= region["y"] + region["h"]
+    )
+
+
+def screenshot(path=None, region=None):
     """Capture the phone screen to a PNG and return its path. View it to see
-    the phone; combine with ocr() for coordinates."""
-    p, _ = mirror.capture(path)
-    return p
+    the phone; combine with ocr() for coordinates. When ``region`` is supplied,
+    the PNG is cropped while coordinates elsewhere remain absolute screen pixels.
+    """
+    if region is None:
+        p, _ = mirror.capture(path)
+        return p
+
+    normalized = normalize_region(region)
+    p, win = mirror.capture()
+    from PIL import Image
+
+    source = Path(p)
+    output = Path(path) if path is not None else source.with_name(f"{source.stem}-region.png")
+    with Image.open(source) as image:
+        sx = image.width / win["w"]
+        sy = image.height / win["h"]
+        left = round((normalized["x"] - win["x"]) * sx)
+        top = round((normalized["y"] - win["y"]) * sy)
+        right = round((normalized["x"] + normalized["w"] - win["x"]) * sx)
+        bottom = round((normalized["y"] + normalized["h"] - win["y"]) * sy)
+        image.crop((left, top, right, bottom)).save(output, format="PNG")
+    return str(output)
 
 
 def screen(path=None):
@@ -137,7 +205,47 @@ def screen(path=None):
 
 # --- reading the screen ---
 
-def elements(min_confidence=0.3):
+def _accessibility_is_sparse(items):
+    informative = 0
+    for item in items:
+        if item.get("role") == "XCUIElementTypeApplication":
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            informative += 1
+    return informative < 3
+
+
+def _same_text_nearby(first, second):
+    first_text = first.get("text")
+    second_text = second.get("text")
+    if not isinstance(first_text, str) or not isinstance(second_text, str):
+        return False
+    if first_text.strip().casefold() != second_text.strip().casefold():
+        return False
+    try:
+        first_x, first_y = float(first["x"]), float(first["y"])
+        second_x, second_y = float(second["x"]), float(second["y"])
+        first_w, first_h = float(first.get("w") or 0), float(first.get("h") or 0)
+        second_w, second_h = float(second.get("w") or 0), float(second.get("h") or 0)
+    except (KeyError, TypeError, ValueError):
+        return False
+    x_tolerance = max(24.0, (first_w + second_w) / 2)
+    y_tolerance = max(16.0, (first_h + second_h) / 2)
+    return abs(first_x - second_x) <= x_tolerance and abs(first_y - second_y) <= y_tolerance
+
+
+def _merge_accessibility_and_ocr(accessible, ocr_boxes):
+    merged = list(accessible)
+    for item in ocr_boxes:
+        candidate = dict(item)
+        candidate.setdefault("source", "ocr")
+        if any(_same_text_nearby(existing, candidate) for existing in accessible):
+            continue
+        merged.append(candidate)
+    return merged
+
+def elements(min_confidence=0.3, region=None, frame=None):
     """Visible text/elements with tap-ready centers.
 
     Windows prefers WDA accessibility and falls back to local OCR when the
@@ -145,20 +253,66 @@ def elements(min_confidence=0.3):
     OCR.
     """
     if _WINDOWS:
+        normalized_region = normalize_region(region) if region is not None else None
         try:
             accessible = mirror.accessibility_elements()
         except RuntimeError:
             accessible = []
-        if accessible:
+        if normalized_region is not None:
+            accessible = [item for item in accessible if _in_region(item, normalized_region)]
+        if accessible and not _accessibility_is_sparse(accessible):
             return accessible
+        if accessible:
+            try:
+                if frame is not None:
+                    if normalized_region is None:
+                        path = frame.variant(max_long_edge=1600, image_format="PNG")
+                        win = frame.window
+                    else:
+                        path = frame.variant(
+                            region=normalized_region,
+                            max_long_edge=1600,
+                            image_format="PNG",
+                        )
+                        win = normalized_region
+                elif normalized_region is None:
+                    path, win = mirror.capture()
+                else:
+                    path, win = screenshot(region=normalized_region), normalized_region
+                ocr_boxes = [
+                    o for o in _ocr.recognize(path, win)
+                    if o["confidence"] >= min_confidence
+                ]
+            except Exception:
+                return accessible
+            return _merge_accessibility_and_ocr(accessible, ocr_boxes)
+        if frame is not None:
+            if normalized_region is None:
+                path = frame.variant(max_long_edge=1600, image_format="PNG")
+                win = frame.window
+            else:
+                path = frame.variant(
+                    region=normalized_region,
+                    max_long_edge=1600,
+                    image_format="PNG",
+                )
+                win = normalized_region
+            return [o for o in _ocr.recognize(path, win)
+                    if o["confidence"] >= min_confidence]
+        if normalized_region is not None:
+            path, win = screenshot(region=normalized_region), normalized_region
+        else:
+            path, win = mirror.capture()
+        return [o for o in _ocr.recognize(path, win)
+                if o["confidence"] >= min_confidence]
     path, win = mirror.capture()
     return [o for o in _ocr.recognize(path, win)
             if o["confidence"] >= min_confidence]
 
 
-def ocr(min_confidence=0.3):
+def ocr(min_confidence=0.3, region=None):
     """Compatibility alias for elements(); accessibility-first on Windows."""
-    return elements(min_confidence=min_confidence)
+    return elements(min_confidence=min_confidence, region=region)
 
 
 def find_text(query, exact=False):
@@ -406,11 +560,20 @@ def wait(seconds=1.0):
 
 
 def wait_stable(timeout=6.0, interval=0.5, settle=2):
-    """Wait until `settle` consecutive captures are identical (animation done).
-    The status-bar clock ticks once a minute, so near-misses are rare."""
+    """Wait for a static screen or a bounded ambient-animation steady state.
+
+    Windows first preserves the old strict signature comparison. If a screen
+    never becomes pixel-still because of a small spinner/glow/video overlay,
+    three consecutive low and similarly-sized frame deltas are accepted as a
+    stable dynamic state. Large or erratic transitions continue waiting.
+    """
     prev, same = None, 0
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    motion = []
+    dynamic_window = 3
+    dynamic_max_distance = 0.05
+    dynamic_max_spread = 0.02
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         path, _ = mirror.capture()
         digest = (mirror.image_signature(path) if _WINDOWS
                   else hashlib.md5(Path(path).read_bytes()).hexdigest())
@@ -419,6 +582,16 @@ def wait_stable(timeout=6.0, interval=0.5, settle=2):
         same = same + 1 if unchanged else 0
         if same >= settle - 1:
             return True
+        if _WINDOWS and prev is not None:
+            distance = mirror.image_signature_distance(prev, digest)
+            motion.append(distance)
+            motion = motion[-dynamic_window:]
+            if (
+                len(motion) == dynamic_window
+                and max(motion) <= dynamic_max_distance
+                and max(motion) - min(motion) <= dynamic_max_spread
+            ):
+                return True
         prev = digest
         time.sleep(interval)
     return False

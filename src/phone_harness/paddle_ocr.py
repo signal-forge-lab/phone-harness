@@ -1,18 +1,49 @@
 """Local OCR for Windows screenshots using PaddleOCR / PP-OCRv6 medium."""
 
 import logging
+import os
+import tempfile
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 from PIL import Image
 
 
 _MODEL = None
 LOG = logging.getLogger(__name__)
+_MAX_INFERENCE_LONG_EDGE = 1600
 
 
 def image_size(path):
     with Image.open(path) as image:
         return image.size
+
+
+@contextmanager
+def _inference_image(path):
+    source = Path(path)
+    temporary = None
+    with Image.open(source) as image:
+        width, height = image.size
+        long_edge = max(width, height)
+        if long_edge <= _MAX_INFERENCE_LONG_EDGE:
+            yield source
+            return
+
+        scale = _MAX_INFERENCE_LONG_EDGE / long_edge
+        target = (max(1, round(width * scale)), max(1, round(height * scale)))
+        resized = image.convert("RGB").resize(target, Image.Resampling.LANCZOS)
+        fd, temporary_name = tempfile.mkstemp(prefix="phone-harness-ocr-", suffix=".png")
+        os.close(fd)
+        temporary = Path(temporary_name)
+        resized.save(temporary, format="PNG", compress_level=1)
+
+    try:
+        yield temporary
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _model():
@@ -73,9 +104,10 @@ def normalize_result(result, image_px, window):
 
 def recognize(path, window):
     started = time.perf_counter()
-    image_px = image_size(path)
     boxes = []
-    for result in _model().predict(str(path)):
-        boxes.extend(normalize_result(result, image_px, window))
+    with _inference_image(path) as inference_path:
+        image_px = image_size(inference_path)
+        for result in _model().predict(str(inference_path)):
+            boxes.extend(normalize_result(result, image_px, window))
     LOG.debug("operation=ocr duration=%.3f result=pass boxes=%d", time.perf_counter() - started, len(boxes))
     return boxes
