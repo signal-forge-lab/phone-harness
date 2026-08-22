@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$KeepMonitor,
+    [switch]$KeepTunneld
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -9,6 +12,7 @@ $config = if (Test-Path $configPath) { Get-Content $configPath -Raw | ConvertFro
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $pythonBridgePath = Join-Path $repoRoot 'mcp-server\python_bridge.py'
+$pythonPath = [string]$config.pythonPath
 $tunnelClientPath = [string]$config.tunnelClientPath
 $tunnelProfilePath = [string]$config.tunnelProfilePath
 $port = if ($config.port) { [int]$config.port } else { 17677 }
@@ -48,7 +52,7 @@ function Get-PhoneHarnessAuxiliaryProcesses {
         $isBridge = Test-CommandLineContainsLiteral $candidate $pythonBridgePath
         $isWda = Test-CommandLineRegex $candidate '(^|\s)-m\s+pymobiledevice3\s+developer\s+wda\s+run-xctrunner\s+com\.iw\.phoneharness\.wda\.'
         $isMonitor = Test-CommandLineRegex $candidate '(^|\s)-m\s+phone_harness\.monitor(?:_web)?(?:\s|$)'
-        if ($isBridge -or $isWda -or $isMonitor) {
+        if ($isBridge -or $isWda -or ($isMonitor -and -not $KeepMonitor)) {
             $matches += $candidate
         }
     }
@@ -84,6 +88,44 @@ function Stop-PhoneHarnessAuxiliaryProcesses {
     }
     $remaining = @(Get-PhoneHarnessAuxiliaryProcesses)
     throw "Verified phone-harness Python bridge/WDA/monitor processes are still running: $($remaining.ProcessId -join ', ')"
+}
+
+function Stop-DeviceWdaRunner {
+    $wdaHosts = @(Get-PhoneHarnessAuxiliaryProcesses | Where-Object {
+        Test-CommandLineRegex $_ '(^|\s)-m\s+pymobiledevice3\s+developer\s+wda\s+run-xctrunner\s+com\.iw\.phoneharness\.wda\.'
+    })
+    if ($wdaHosts.Count -eq 0) { return }
+    if (-not $pythonPath -or -not (Test-Path $pythonPath -PathType Leaf)) {
+        Write-Warning 'Skipping device-side WDA shutdown because configured phone-harness Python is unavailable.'
+        return
+    }
+
+    $previousTransport = $env:PHONE_HARNESS_TRANSPORT
+    $previousPythonPath = $env:PYTHONPATH
+    $previousErrorActionPreference = $ErrorActionPreference
+    $env:PHONE_HARNESS_TRANSPORT = if ($config.transport) { [string]$config.transport } else { 'wifi' }
+    $env:PYTHONPATH = Join-Path $repoRoot 'src'
+    $pythonCode = 'from phone_harness import windows; runner=windows._wda_runner_bundle(); windows._run_pm3("developer","dvt","pkill",runner,"--bundle",timeout=10)'
+    try {
+        # Windows PowerShell 5.1 can promote native stderr records to terminating
+        # errors when the script-wide ErrorActionPreference is Stop. pymobiledevice3
+        # may write non-fatal diagnostics to stderr, so judge this subprocess by
+        # its native exit code instead.
+        $ErrorActionPreference = 'Continue'
+        $output = & $pythonPath -c $pythonCode 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            Write-Host 'Device-side WDA runner stopped.'
+        } else {
+            Write-Warning "Device-side WDA shutdown was not confirmed; continuing local cleanup. $($output -join ' ')"
+        }
+    } catch {
+        Write-Warning "Device-side WDA shutdown failed; continuing local cleanup. $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        $env:PHONE_HARNESS_TRANSPORT = $previousTransport
+        $env:PYTHONPATH = $previousPythonPath
+    }
 }
 
 function Test-McpProcessSignature {
@@ -170,8 +212,13 @@ function Get-TunneldListenerProcess {
     # phone-harness and the local tunneld HTTP endpoint is healthy.
     if (Test-Path $tunneldPidPath) {
         $rawPid = (Get-Content $tunneldPidPath -Raw).Trim()
-        if ($rawPid -match '^\d+$' -and [int]$rawPid -eq $listener.OwningProcess -and (Test-TunneldEndpointReady)) {
-            return $process
+        if ($rawPid -match '^\d+$') {
+            $managedPid = [int]$rawPid
+            $isManagedProcess = $managedPid -eq $listener.OwningProcess -or
+                ($process -and [int]$process.ParentProcessId -eq $managedPid)
+            if ($isManagedProcess -and (Test-TunneldEndpointReady)) {
+                return $process
+            }
         }
     }
     return $null
@@ -239,11 +286,14 @@ if ($remainingTunnelProcesses.Count -gt 0) {
 }
 Remove-Item (Join-Path $stateDir 'tunnel-client.pid') -Force -ErrorAction SilentlyContinue
 
+Stop-DeviceWdaRunner
 Stop-ManagedMcp
 Stop-PhoneHarnessAuxiliaryProcesses
 
 $tunneldPidPath = Join-Path $stateDir 'tunneld.pid'
-if (Get-NetTCPConnection -LocalPort $tunneldPort -State Listen -ErrorAction SilentlyContinue) {
+if ($KeepTunneld -and (Get-NetTCPConnection -LocalPort $tunneldPort -State Listen -ErrorAction SilentlyContinue)) {
+    Write-Host "pymobiledevice3 tunneld kept running on TCP $tunneldPort."
+} elseif (Get-NetTCPConnection -LocalPort $tunneldPort -State Listen -ErrorAction SilentlyContinue) {
     $tunneldPythonPath = [string]$config.tunneldPythonPath
     if (-not $tunneldPythonPath) {
         $tunneldPythonPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Intelligence Works\products\phone-harness-windows\.venv-tunneld\Scripts\python.exe'
@@ -288,7 +338,9 @@ if (Get-NetTCPConnection -LocalPort $tunneldPort -State Listen -ErrorAction Sile
 }
 
 $monitorStatePath = Join-Path $env:TEMP 'phone-harness\monitor\server.json'
-Remove-Item $monitorStatePath -Force -ErrorAction SilentlyContinue
+if (-not $KeepMonitor) {
+    Remove-Item $monitorStatePath -Force -ErrorAction SilentlyContinue
+}
 
 $verificationErrors = @()
 $remainingAuxiliary = @(Get-PhoneHarnessAuxiliaryProcesses)
@@ -299,13 +351,18 @@ $remainingConfiguredTunnel = @(Get-ConfiguredTunnelProcesses)
 if ($remainingConfiguredTunnel.Count -gt 0) {
     $verificationErrors += "Secure MCP Tunnel PIDs remain: $($remainingConfiguredTunnel.ProcessId -join ', ')"
 }
-foreach ($checkedPort in @($port, $monitorPort, $tunneldPort)) {
+$checkedPorts = @($port)
+if (-not $KeepMonitor) { $checkedPorts += $monitorPort }
+if (-not $KeepTunneld) { $checkedPorts += $tunneldPort }
+foreach ($checkedPort in $checkedPorts) {
     $listeners = @(Get-NetTCPConnection -LocalPort $checkedPort -State Listen -ErrorAction SilentlyContinue)
     if ($listeners.Count -gt 0) {
         $verificationErrors += "TCP $checkedPort is still listening (PID $($listeners.OwningProcess -join ', '))"
     }
 }
-foreach ($pidFile in @('mcp.pid', 'tunnel-client.pid', 'tunneld.pid')) {
+$pidFiles = @('mcp.pid', 'tunnel-client.pid')
+if (-not $KeepTunneld) { $pidFiles += 'tunneld.pid' }
+foreach ($pidFile in $pidFiles) {
     $path = Join-Path $stateDir $pidFile
     if (Test-Path $path) {
         $verificationErrors += "stale managed PID file remains: $pidFile"
@@ -316,4 +373,8 @@ if ($verificationErrors.Count -gt 0) {
     throw "phone-harness stop verification failed:`n - $($verificationErrors -join "`n - ")"
 }
 
-Write-Host 'STOPPED: phone-harness runtime fully stopped; MCP/Secure Tunnel/tunneld/WDA/bridge/monitor processes and managed listeners are clear.'
+if ($KeepMonitor -or $KeepTunneld) {
+    Write-Host "STOPPED: phone-harness MCP/runtime stopped; preserved services: $((@($(if ($KeepMonitor) {'monitor'}), $(if ($KeepTunneld) {'tunneld'})) | Where-Object { $_ }) -join ', ')."
+} else {
+    Write-Host 'STOPPED: phone-harness runtime fully stopped; MCP/Secure Tunnel/tunneld/WDA/bridge/monitor processes and managed listeners are clear.'
+}

@@ -31,6 +31,11 @@ _WDA_RUNNER_BUNDLE = None
 _WDA_READY = False
 _WDA_RUNNER_PROCESS = None
 _WDA_RECOVERY_COUNT = 0
+_WDA_STATE = "not_started"
+_WDA_STARTUP_BACKOFF_UNTIL = 0.0
+_WDA_REPEAT_TAP_SETTLE_SECONDS = 0.25
+_WDA_STARTUP_BACKOFF_SECONDS = 20.0
+_WDA_RUNNER_STARTUP_TIMEOUT_SECONDS = 600
 _POINT_SCALE = None
 _DEVICE_TRANSPORT = None
 _DEVICE_RSD = None
@@ -39,6 +44,7 @@ _INPROCESS_LOOP = None
 _INPROCESS_RSD_PROVIDER = None
 _INPROCESS_RSD_ENDPOINT = None
 _INPROCESS_WDA_CLIENT = None
+_WDA_CAPTURE_PROBE_BACKOFF_UNTIL = 0.0
 _PM3_PROCESS_COUNT = 0
 _PM3_LAST_OPERATION = None
 _PM3_LAST_DURATION_MS = None
@@ -48,7 +54,7 @@ _TUNNELD_URL = "http://127.0.0.1:49151"
 
 
 def _clear_device_cache():
-    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _WDA_READY, _POINT_SCALE
+    global _DEVICE_UDID, _DEVICE_TRANSPORT, _DEVICE_RSD, _SCREEN_SIZE, _PRODUCT_VERSION, _WDA_RUNNER_BUNDLE, _WDA_READY, _WDA_STATE, _WDA_STARTUP_BACKOFF_UNTIL, _WDA_CAPTURE_PROBE_BACKOFF_UNTIL, _POINT_SCALE
     _close_inprocess_rsd()
     _DEVICE_UDID = None
     _DEVICE_TRANSPORT = None
@@ -57,6 +63,9 @@ def _clear_device_cache():
     _PRODUCT_VERSION = None
     _WDA_RUNNER_BUNDLE = None
     _WDA_READY = False
+    _WDA_STATE = "not_started"
+    _WDA_STARTUP_BACKOFF_UNTIL = 0.0
+    _WDA_CAPTURE_PROBE_BACKOFF_UNTIL = 0.0
     _POINT_SCALE = None
     _APP_BUNDLE_CACHE.clear()
 
@@ -81,6 +90,13 @@ def _transport_cli_args():
     if _DEVICE_TRANSPORT == "wifi" and _DEVICE_RSD:
         return ["--rsd", _DEVICE_RSD[0], str(_DEVICE_RSD[1])]
     return []
+
+
+def _developer_transport_cli_args():
+    """Use tunneld explicitly for pymobiledevice3 developer commands on Wi-Fi."""
+    if _DEVICE_TRANSPORT == "wifi" and _DEVICE_RSD:
+        return ["--tunnel", _require_device()]
+    return _transport_cli_args()
 
 
 def _inprocess_supported():
@@ -205,20 +221,84 @@ def _inprocess_wda_items(timeout=30):
     return _wda_items_from_source(source)
 
 
+def _inprocess_wda_screenshot(timeout=10):
+    client = _inprocess_wda_client()
+    if client is None:
+        return None
+    try:
+        return _run_async(client.get_screenshot(), timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError(f"pymobiledevice3 in-process WDA screenshot failed: {exc}") from exc
+
+
+def _probe_existing_wda_screenshot():
+    """Try one fast screenshot from an already-running WDA.
+
+    The screenshot itself is the readiness probe, avoiding a separate status
+    round-trip on the first visual-only capture in a fresh process.
+    """
+    global _WDA_READY, _WDA_STATE, _WDA_CAPTURE_PROBE_BACKOFF_UNTIL
+    if _WDA_READY:
+        return None
+    if not _inprocess_supported():
+        return None
+    now = time.monotonic()
+    if now < _WDA_CAPTURE_PROBE_BACKOFF_UNTIL:
+        return None
+    try:
+        data = _inprocess_wda_screenshot(timeout=1)
+    except Exception:
+        _WDA_CAPTURE_PROBE_BACKOFF_UNTIL = now + 20.0
+        return None
+    if not data:
+        _WDA_CAPTURE_PROBE_BACKOFF_UNTIL = now + 20.0
+        return None
+    _WDA_READY = True
+    _WDA_STATE = "ready"
+    _WDA_CAPTURE_PROBE_BACKOFF_UNTIL = 0.0
+    return data
+
+
 def _inprocess_wda_batch(actions, timeout=30):
     client = _inprocess_wda_client()
     if client is None:
         return False
 
+    repeated_same_coordinate_taps = (
+        len(actions) > 1
+        and all(
+            isinstance(action, dict)
+            and action.get("op") == "tap-coordinate"
+            and action.get("x") == actions[0].get("x")
+            and action.get("y") == actions[0].get("y")
+            for action in actions
+        )
+    )
+
     async def task():
-        session_id = await client.start_session_for_active_app()
-        await client.set_wait_for_idle_timeout(0, session_id=session_id)
-        await client.run_batch_actions(actions, session_id=session_id)
+        session_id = client.session_id
+        if not session_id:
+            session_id = await client.start_session_for_active_app()
+            await client.set_wait_for_idle_timeout(0, session_id=session_id)
+        if repeated_same_coordinate_taps:
+            # Repeated taps at one board coordinate are producer bursts. WDA
+            # can deliver them faster than Merge Boss completes its
+            # select->emit state transition, causing apparently successful
+            # batches with no produced item. Keep every other mixed batch on
+            # the original zero-extra-delay fast path and add only a tiny
+            # producer-specific settle between taps.
+            for index, action in enumerate(actions):
+                await client.run_batch_actions([action], session_id=session_id)
+                if index + 1 < len(actions):
+                    await asyncio.sleep(_WDA_REPEAT_TAP_SETTLE_SECONDS)
+        else:
+            await client.run_batch_actions(actions, session_id=session_id)
         return {"sessionId": session_id, "count": len(actions)}
 
     try:
         _run_async(task(), timeout=timeout)
     except Exception as exc:
+        client.session_id = None
         raise RuntimeError(f"pymobiledevice3 in-process WDA batch failed: {exc}") from exc
     return True
 
@@ -311,7 +391,7 @@ def _run_pm3(*args, timeout=90, use_transport=True, input_text=None):
     _PM3_LAST_OPERATION = operation
     cmd = [sys.executable, "-m", "pymobiledevice3", *map(str, args)]
     if use_transport:
-        cmd.extend(_transport_cli_args())
+        cmd.extend(_developer_transport_cli_args() if args and args[0] == "developer" else _transport_cli_args())
     env = os.environ.copy()
     if _DEVICE_UDID:
         env["PYMOBILEDEVICE3_UDID"] = _DEVICE_UDID
@@ -441,11 +521,14 @@ def active_transport():
 
 def runtime_transport_status():
     """Return process-local transport telemetry without device identifiers."""
+    runner_alive = _WDA_RUNNER_PROCESS is not None and _WDA_RUNNER_PROCESS.poll() is None
     return {
         "active_transport": _DEVICE_TRANSPORT,
         "device_cached": _DEVICE_UDID is not None,
         "rsd_cached": _DEVICE_RSD is not None,
         "wda_ready": bool(_WDA_READY),
+        "wda_state": _WDA_STATE,
+        "wda_runner_alive": runner_alive,
         "wda_recovery_count": _WDA_RECOVERY_COUNT,
         "pm3_process_count": _PM3_PROCESS_COUNT,
         "last_pm3_operation": _PM3_LAST_OPERATION,
@@ -502,18 +585,39 @@ def _wda_runner_bundle():
 
 
 def _ensure_wda_runner():
-    global _WDA_READY, _WDA_RUNNER_PROCESS
+    global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_STATE, _WDA_STARTUP_BACKOFF_UNTIL
     if _WDA_READY:
+        _WDA_STATE = "ready"
         return
+
+    now = time.monotonic()
+    runner_alive = _WDA_RUNNER_PROCESS is not None and _WDA_RUNNER_PROCESS.poll() is None
+    pending_backoff = runner_alive and now < _WDA_STARTUP_BACKOFF_UNTIL
     try:
         if _inprocess_supported():
-            _inprocess_wda_status(timeout=5)
+            try:
+                _inprocess_wda_status(timeout=1 if pending_backoff else 5)
+            except RuntimeError:
+                # A long-lived Wi-Fi runtime can retain an RSD client after its
+                # transport session has gone stale even though the separately
+                # owned WDA runner is healthy. Refresh only after backoff has
+                # elapsed so normal startup keeps the short probe fast.
+                if not runner_alive or pending_backoff:
+                    raise
+                _close_inprocess_rsd()
+                _inprocess_wda_status(timeout=5)
         else:
-            _run_pm3("developer", "wda", "status", timeout=5)
+            _run_pm3("developer", "wda", "status", timeout=1 if pending_backoff else 5)
         _WDA_READY = True
+        _WDA_STATE = "ready"
+        _WDA_STARTUP_BACKOFF_UNTIL = 0.0
         return
     except RuntimeError:
         pass
+
+    if pending_backoff:
+        _WDA_STATE = "pending"
+        raise RuntimeError("WDA runner is still starting or awaiting device confirmation")
 
     udid = _require_device()
     if _WDA_RUNNER_PROCESS is None or _WDA_RUNNER_PROCESS.poll() is not None:
@@ -523,7 +627,8 @@ def _ensure_wda_runner():
         _WDA_RUNNER_PROCESS = subprocess.Popen(
             [
                 sys.executable, "-m", "pymobiledevice3", "developer", "wda", "run-xctrunner", runner,
-                *_transport_cli_args(),
+                "--startup-timeout", str(_WDA_RUNNER_STARTUP_TIMEOUT_SECONDS),
+                *_developer_transport_cli_args(),
             ],
             env=env,
             stdin=subprocess.DEVNULL,
@@ -531,21 +636,30 @@ def _ensure_wda_runner():
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+    _WDA_STATE = "starting"
 
     deadline = time.monotonic() + 35
     last_error = None
     while time.monotonic() < deadline:
+        if _WDA_RUNNER_PROCESS is not None and _WDA_RUNNER_PROCESS.poll() is not None:
+            _WDA_STATE = "failed"
+            _WDA_STARTUP_BACKOFF_UNTIL = 0.0
+            raise RuntimeError("WDA runner exited before becoming ready")
         try:
             if _inprocess_supported():
                 _inprocess_wda_status(timeout=5)
             else:
                 _run_pm3("developer", "wda", "status", timeout=5)
             _WDA_READY = True
+            _WDA_STATE = "ready"
+            _WDA_STARTUP_BACKOFF_UNTIL = 0.0
             return
         except RuntimeError as exc:
             last_error = exc
             _require_device()
             time.sleep(0.25)
+    _WDA_STATE = "pending"
+    _WDA_STARTUP_BACKOFF_UNTIL = time.monotonic() + _WDA_STARTUP_BACKOFF_SECONDS
     raise RuntimeError("WDA runner did not become ready within 35 seconds") from last_error
 
 
@@ -555,6 +669,14 @@ def _is_stale_wda_application_error(exc):
         "previously found element" in text
         and "Application 'local.pid." in text
         and "is not running" in text
+    )
+
+
+def _is_wda_ui_testing_unauthorized_error(exc):
+    text = " ".join(str(exc).split()).lower()
+    return (
+        "not authorized for performing ui testing actions" in text
+        or ("xctdaemonerrordomain" in text and "code=41" in text)
     )
 
 
@@ -597,13 +719,15 @@ def _stop_owned_process_tree(process, timeout=5):
 
 def _restart_wda_runner():
     """Restart only the phone-harness WDA runner after a proven stale-app failure."""
-    global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_RECOVERY_COUNT
+    global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_RECOVERY_COUNT, _WDA_STATE, _WDA_STARTUP_BACKOFF_UNTIL
 
     runner = _wda_runner_bundle()
     process = _WDA_RUNNER_PROCESS
     owned_runner_stopped = False
     _WDA_READY = False
     _WDA_RUNNER_PROCESS = None
+    _WDA_STATE = "not_started"
+    _WDA_STARTUP_BACKOFF_UNTIL = 0.0
 
     if process is not None and process.poll() is None:
         _stop_owned_process_tree(process)
@@ -627,12 +751,14 @@ def _restart_wda_runner():
 
 def shutdown_runtime():
     """Stop only a WDA runner owned by this Python runtime."""
-    global _WDA_READY, _WDA_RUNNER_PROCESS
+    global _WDA_READY, _WDA_RUNNER_PROCESS, _WDA_STATE, _WDA_STARTUP_BACKOFF_UNTIL
 
     process = _WDA_RUNNER_PROCESS
     runner = _WDA_RUNNER_BUNDLE
     _WDA_READY = False
     _WDA_RUNNER_PROCESS = None
+    _WDA_STATE = "not_started"
+    _WDA_STARTUP_BACKOFF_UNTIL = 0.0
     if process is not None and process.poll() is None:
         if runner:
             try:
@@ -662,14 +788,23 @@ def _run_wda_batch(actions, timeout=30):
 
 
 def _wda_action_for_accessibility(item):
+    x = item.get("x")
+    y = item.get("y")
+    if (
+        isinstance(x, (int, float))
+        and not isinstance(x, bool)
+        and isinstance(y, (int, float))
+        and not isinstance(y, bool)
+    ):
+        x, y = _wda_point(x, y)
+        return {"op": "tap-coordinate", "x": x, "y": y}
     name = item.get("name")
     label = item.get("label")
     if isinstance(name, str) and name:
         return {"op": "tap", "selector": name, "using": "accessibility id"}
     if isinstance(label, str) and label:
         return {"op": "tap", "selector": label, "using": "label"}
-    x, y = _wda_point(item["x"], item["y"])
-    return {"op": "tap-coordinate", "x": x, "y": y}
+    raise RuntimeError("accessibility target has neither coordinates nor a usable selector")
 
 
 def _wda_action_for_tap(x, y):
@@ -921,11 +1056,47 @@ def capture(path=None, retries=0):
     temp_path = Path(temp_name)
     temp_path.unlink(missing_ok=True)
     try:
-        _run_pm3("developer", "core-device", "screen-capture", "screenshot", temp_path)
-        if not temp_path.exists() or temp_path.stat().st_size == 0:
-            raise RuntimeError("CoreDevice screenshot command completed without a PNG")
-        with Image.open(temp_path) as image:
-            width, height = image.size
+        width = height = None
+        if _inprocess_supported() and not _remote_control_supported(_product_version()):
+            _ensure_wda_runner()
+            try:
+                data = _inprocess_wda_screenshot(timeout=10)
+            except Exception as exc:
+                # A WDA status probe can remain healthy while the underlying
+                # XCTest session has lost authorization for UI-testing actions.
+                # Restart only the signed phone-harness runner once, then retry
+                # the screenshot so a stale authorized session does not strand
+                # all observation until the whole MCP process is restarted.
+                if not _is_wda_ui_testing_unauthorized_error(exc):
+                    raise
+                _restart_wda_runner()
+                data = _inprocess_wda_screenshot(timeout=10)
+            if not data:
+                raise RuntimeError("WDA screenshot returned no PNG data")
+            temp_path.write_bytes(data)
+            with Image.open(temp_path) as image:
+                width, height = image.size
+        elif _inprocess_supported():
+            try:
+                data = (
+                    _inprocess_wda_screenshot(timeout=10)
+                    if _WDA_READY
+                    else _probe_existing_wda_screenshot()
+                )
+                if data:
+                    temp_path.write_bytes(data)
+                    with Image.open(temp_path) as image:
+                        width, height = image.size
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                width = height = None
+
+        if width is None or height is None:
+            _run_pm3("developer", "core-device", "screen-capture", "screenshot", temp_path)
+            if not temp_path.exists() or temp_path.stat().st_size == 0:
+                raise RuntimeError("CoreDevice screenshot command completed without a PNG")
+            with Image.open(temp_path) as image:
+                width, height = image.size
         temp_path.replace(path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -1126,4 +1297,13 @@ def image_signatures_close(first, second, tolerance=0.01):
     """Treat tiny live-screen noise as stable without hiding real UI changes."""
     if len(first) != len(second) or not first:
         return first == second
-    return sum(abs(a - b) for a, b in zip(first, second)) / len(first) <= tolerance
+    return image_signature_distance(first, second) <= tolerance
+
+
+def image_signature_distance(first, second):
+    """Mean absolute distance between quantized grayscale screen signatures."""
+    if len(first) != len(second) or not first:
+        if first == second:
+            return 0.0
+        raise ValueError("screen signatures must be non-empty and have equal length")
+    return sum(abs(a - b) for a, b in zip(first, second)) / len(first)

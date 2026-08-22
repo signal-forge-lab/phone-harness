@@ -3,12 +3,142 @@ import unittest
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from phone_harness.runtime import PhoneRuntime, PhoneRuntimeError, RUNTIME_CONTRACT_VERSION
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_operator_answer_can_be_promoted_into_pending_human_teaching(self):
+        runtime = PhoneRuntime()
+        runtime.operator_broker = MagicMock()
+        runtime.operator_broker.is_present.return_value = True
+        runtime.operator_broker.ask.return_value = {
+            "answer": "これはバブルです。マージ後に近くへ追加で出ます。",
+            "choice": None,
+        }
+        runtime.teaching_inbox = MagicMock()
+        runtime.teaching_inbox.submit.return_value = {"message_id": "teach-from-question"}
+
+        result = runtime.ask_operator(
+            "これは何ですか？",
+            context="merge outcome ambiguous",
+            promote_answer_to_teaching=True,
+        )
+
+        self.assertTrue(result["answered"])
+        self.assertEqual(result["teaching_message_id"], "teach-from-question")
+        submitted = runtime.teaching_inbox.submit.call_args.args[0]
+        self.assertIn("これは何ですか？", submitted)
+        self.assertIn("これはバブルです", submitted)
+        kwargs = runtime.teaching_inbox.submit.call_args.kwargs
+        self.assertEqual(kwargs["source"], "operator_question_answer")
+        self.assertFalse(kwargs["blocking"])
+
+    def test_pending_human_teaching_ignores_nonblocking_question_answers(self):
+        runtime = PhoneRuntime()
+        runtime.teaching_inbox = MagicMock()
+        runtime.teaching_inbox.list.return_value = [
+            {
+                "message_id": "late-answer",
+                "text": "回答",
+                "status": "pending",
+                "blocking": False,
+            },
+            {
+                "message_id": "operator-message",
+                "text": "停止して見てほしい",
+                "status": "pending",
+                "blocking": True,
+            },
+        ]
+        pending = runtime.pending_human_teaching()
+        self.assertEqual(pending["message_id"], "operator-message")
+
+    def test_pause_checkpoint_detects_pause_that_already_resumed_and_invalidates_observation(self):
+        initial = {
+            "schema_version": 1,
+            "paused": False,
+            "changed_unix": None,
+            "source": None,
+            "pause_generation": 0,
+            "last_pause_unix": None,
+        }
+        resumed_after_pause = {
+            "schema_version": 1,
+            "paused": False,
+            "changed_unix": 11.0,
+            "source": "monitor-web",
+            "pause_generation": 1,
+            "last_pause_unix": 10.0,
+        }
+        with patch("phone_harness.runtime.load_runtime_control", return_value=initial):
+            runtime = PhoneRuntime()
+        runtime._observation = {"source": "visual", "elements": []}
+        runtime._observation_id = 9
+
+        with patch("phone_harness.runtime.load_runtime_control", return_value=resumed_after_pause):
+            checkpoint = runtime.pause_checkpoint(boundary="test")
+
+        self.assertTrue(checkpoint["replan_required"])
+        self.assertEqual(checkpoint["wait_ms"], 0.0)
+        self.assertEqual(checkpoint["pause_generation"], 1)
+        self.assertIsNone(runtime._observation)
+        self.assertIsNone(runtime._observation_id)
+
+    def test_run_workflow_rejects_unknown_name(self):
+        runtime = PhoneRuntime()
+        with self.assertRaisesRegex(PhoneRuntimeError, "unsupported workflow"):
+            runtime.run_workflow("unknown")
+
+    def test_run_workflow_rejects_unknown_option_before_device_work(self):
+        runtime = PhoneRuntime()
+        with self.assertRaisesRegex(PhoneRuntimeError, "unsupported merge_boss_once option"):
+            runtime.run_workflow("merge_boss_once", {"unexpected": True})
+
+    def test_merge_boss_turn_reports_not_ready_perception_without_device_work(self):
+        runtime = PhoneRuntime()
+        fake = MagicMock()
+        fake.status.return_value = {
+            "ready": False,
+            "reason": "real_device_perception_calibration_required",
+            "pending_checks": ["calibrate the full horizontally-scrollable customer/order strip"],
+        }
+        with patch(
+            "phone_harness.workflows.merge_boss_perception.MergeBossLivePerception",
+            return_value=fake,
+        ):
+            result = runtime.run_workflow(
+                "merge_boss_turn",
+                {"max_cycles": 8, "max_merges": 16, "max_emissions": 20},
+            )
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["reason"], "real_device_perception_calibration_required")
+        self.assertTrue(any("customer/order strip" in item for item in result["pending_checks"]))
+
+    def test_merge_boss_turn_reuses_perception_across_workflow_calls(self):
+        runtime = PhoneRuntime()
+        perception = MagicMock()
+        perception.status.return_value = {"ready": True}
+        controller = MagicMock()
+        controller.run.return_value = {"cycles": [], "duration_ms": 1.0}
+        with patch(
+            "phone_harness.workflows.merge_boss_perception.MergeBossLivePerception",
+            return_value=perception,
+        ) as perception_type, patch(
+            "phone_harness.workflows.merge_boss_control.MergeBossTurnController",
+            return_value=controller,
+        ) as controller_type:
+            first = runtime.run_workflow("merge_boss_turn", {"max_cycles": 1})
+            second = runtime.run_workflow("merge_boss_turn", {"max_cycles": 1})
+
+        self.assertTrue(first["executed"])
+        self.assertTrue(second["executed"])
+        perception_type.assert_called_once_with(runtime)
+        self.assertEqual(controller_type.call_count, 2)
+        self.assertIs(controller_type.call_args_list[0].args[1], perception)
+        self.assertIs(controller_type.call_args_list[1].args[1], perception)
+
     def setUp(self):
         self._status_dir = TemporaryDirectory()
         self._status_patch = patch(
@@ -16,8 +146,19 @@ class RuntimeTests(unittest.TestCase):
             Path(self._status_dir.name) / "runtime-status.json",
         )
         self._status_patch.start()
+        # Runtime tests must never inherit a real operator Pause from the live
+        # monitor. Otherwise a unit test that calls act() correctly waits on
+        # production control state and the suite appears to deadlock.
+        self._control_dir = TemporaryDirectory()
+        self._control_patch = patch(
+            "phone_harness.runtime_control.DEFAULT_CONTROL_FILE",
+            Path(self._control_dir.name) / "control.json",
+        )
+        self._control_patch.start()
 
     def tearDown(self):
+        self._control_patch.stop()
+        self._control_dir.cleanup()
         self._status_patch.stop()
         self._status_dir.cleanup()
 
@@ -127,6 +268,185 @@ class RuntimeTests(unittest.TestCase):
             observed = runtime.observe()
         self.assertEqual(observed["elements"][0]["element_ref"], "e1")
 
+    def test_observe_reports_hybrid_source_for_mixed_elements(self):
+        runtime = PhoneRuntime()
+        elements = [
+            {"text": "Button", "source": "accessibility", "role": "XCUIElementTypeButton", "x": 1, "y": 2},
+            {"text": "Canvas label", "source": "ocr", "x": 3, "y": 4},
+        ]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observed = runtime.observe()
+        self.assertEqual(observed["source"], "hybrid")
+
+    def test_observe_region_uses_region_as_cache_scope(self):
+        runtime = PhoneRuntime(observation_ttl=10)
+        first_region = {"x": 10.0, "y": 20.0, "w": 100.0, "h": 200.0}
+        second_region = {"x": 20.0, "y": 20.0, "w": 100.0, "h": 200.0}
+        elements = [{"text": "Target", "source": "ocr", "x": 30, "y": 40}]
+        with patch("phone_harness.runtime.helpers.normalize_region", side_effect=lambda region: dict(region)), \
+                patch("phone_harness.runtime.helpers.elements", return_value=elements) as read:
+            first = runtime.observe(region=first_region)
+            cached = runtime.observe(region=first_region)
+            second = runtime.observe(region=second_region)
+
+        self.assertEqual(first["region"], first_region)
+        self.assertTrue(cached["cached"])
+        self.assertFalse(second["cached"])
+        self.assertNotEqual(first["observation_id"], second["observation_id"])
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(read.call_args_list[0].kwargs, {"region": first_region})
+        self.assertEqual(read.call_args_list[1].kwargs, {"region": second_region})
+
+    def test_observe_include_image_reuses_one_frame_for_elements_and_image(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=10)
+            image_path = Path(directory) / "frame.png"
+            image_path.write_bytes(b"png")
+            frame = MagicMock()
+            frame.capture_ms = 12.5
+            frame.variant.return_value = image_path
+            elements = [{"text": "Target", "source": "ocr", "x": 30, "y": 40}]
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame) as capture_frame, \
+                    patch("phone_harness.runtime.helpers.elements", return_value=elements) as read:
+                observed = runtime.observe(include_image=True)
+
+            capture_frame.assert_called_once_with()
+            read.assert_called_once_with(frame=frame)
+            frame.variant.assert_called_once_with(image_format="PNG")
+            self.assertEqual(observed["_image_path"], str(image_path))
+            self.assertEqual(observed["image_bytes"], 3)
+            self.assertEqual(observed["capture_ms"], 12.5)
+
+    def test_cached_image_observation_reuses_retained_frame(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=10)
+            image_path = Path(directory) / "frame.png"
+            image_path.write_bytes(b"png")
+            frame = MagicMock()
+            frame.capture_ms = 4.0
+            frame.variant.return_value = image_path
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame) as capture_frame, \
+                    patch("phone_harness.runtime.helpers.elements", return_value=[]):
+                first = runtime.observe(include_image=True)
+                second = runtime.observe(include_image=True)
+
+            self.assertFalse(first["cached"])
+            self.assertTrue(second["cached"])
+            capture_frame.assert_called_once_with()
+            self.assertEqual(first["observation_id"], second["observation_id"])
+
+    def test_visual_observe_skips_semantic_analysis_and_returns_coarse_jpeg(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=10)
+            image_path = Path(directory) / "glance.jpg"
+            image_path.write_bytes(b"jpeg-bytes")
+            frame = MagicMock()
+            frame.capture_ms = 3.25
+            frame.variant.return_value = image_path
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame), \
+                    patch("phone_harness.runtime.helpers.elements") as read:
+                observed = runtime.observe(mode="visual", image_profile="glance")
+
+            read.assert_not_called()
+            frame.variant.assert_called_once_with(
+                max_long_edge=256,
+                grayscale=False,
+                image_format="JPEG",
+                quality=28,
+            )
+            self.assertEqual(observed["source"], "visual")
+            self.assertEqual(observed["elements"], [])
+            self.assertEqual(observed["_image_path"], str(image_path))
+            self.assertEqual(observed["_image_mime_type"], "image/jpeg")
+            self.assertEqual(observed["image_profile"], "glance")
+            self.assertEqual(observed["image_bytes"], len(b"jpeg-bytes"))
+            self.assertEqual(observed["capture_ms"], 3.25)
+            self.assertGreaterEqual(observed["analysis_ms"], 0)
+            self.assertGreaterEqual(observed["image_prepare_ms"], 0)
+
+    def test_visual_and_semantic_observations_do_not_share_cache_scope(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=10)
+            image_path = Path(directory) / "glance.jpg"
+            image_path.write_bytes(b"jpeg")
+            frame = MagicMock()
+            frame.capture_ms = 1.0
+            frame.variant.return_value = image_path
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame), \
+                    patch("phone_harness.runtime.helpers.elements", return_value=[{"text": "A", "source": "accessibility"}]) as read:
+                visual = runtime.observe(mode="visual", image_profile="glance")
+                semantic = runtime.observe()
+
+            self.assertFalse(visual["cached"])
+            self.assertFalse(semantic["cached"])
+            self.assertNotEqual(visual["observation_id"], semantic["observation_id"])
+            read.assert_called_once_with()
+
+    def test_visual_refinement_reuses_retained_frame_after_ttl_without_recapture(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=0.01)
+            glance = Path(directory) / "glance.jpg"
+            detail = Path(directory) / "detail.jpg"
+            glance.write_bytes(b"g")
+            detail.write_bytes(b"detail")
+            frame = MagicMock()
+            frame.capture_ms = 7.0
+            frame.variant.side_effect = [glance, detail]
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame) as capture_frame, \
+                    patch("phone_harness.runtime.time.monotonic", side_effect=[1.0, 2.0]), \
+                    patch("phone_harness.runtime.helpers.elements") as read:
+                first = runtime.observe(mode="visual", image_profile="glance")
+                refined = runtime.observe(
+                    mode="visual",
+                    image_profile="detail",
+                    reuse_observation_id=first["observation_id"],
+                )
+
+            read.assert_not_called()
+            capture_frame.assert_called_once_with()
+            self.assertEqual(refined["observation_id"], first["observation_id"])
+            self.assertTrue(refined["cached"])
+            self.assertTrue(refined["reused_observation"])
+            self.assertEqual(refined["image_profile"], "detail")
+            self.assertEqual(refined["image_bytes"], len(b"detail"))
+
+    def test_visual_refinement_rejects_stale_observation_id(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=10)
+            glance = Path(directory) / "glance.jpg"
+            glance.write_bytes(b"g")
+            frame = MagicMock()
+            frame.capture_ms = 1.0
+            frame.variant.return_value = glance
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame):
+                first = runtime.observe(mode="visual", image_profile="glance")
+                with self.assertRaisesRegex(PhoneRuntimeError, "current retained visual observation") as error:
+                    runtime.observe(
+                        mode="visual",
+                        image_profile="detail",
+                        reuse_observation_id=first["observation_id"] + 1,
+                    )
+            self.assertEqual(error.exception.code, "STALE_OBSERVATION")
+
+    def test_visual_refinement_rejects_retained_frame_older_than_reuse_ttl(self):
+        with TemporaryDirectory() as directory:
+            runtime = PhoneRuntime(observation_ttl=0.01, visual_reuse_ttl=30.0)
+            glance = Path(directory) / "glance.jpg"
+            glance.write_bytes(b"g")
+            frame = MagicMock()
+            frame.capture_ms = 1.0
+            frame.variant.return_value = glance
+            with patch("phone_harness.runtime.helpers.capture_frame", return_value=frame), \
+                    patch("phone_harness.runtime.time.monotonic", side_effect=[1.0, 32.0]):
+                first = runtime.observe(mode="visual", image_profile="glance")
+                with self.assertRaises(PhoneRuntimeError) as error:
+                    runtime.observe(
+                        mode="visual",
+                        image_profile="detail",
+                        reuse_observation_id=first["observation_id"],
+                    )
+            self.assertEqual(error.exception.code, "STALE_OBSERVATION")
+
     def test_observe_redacts_luhn_valid_payment_card_text(self):
         runtime = PhoneRuntime()
         elements = [{"text": "4111 1111 1111 1111", "source": "accessibility", "role": "XCUIElementTypeLink", "x": 1, "y": 2}]
@@ -145,12 +465,14 @@ class RuntimeTests(unittest.TestCase):
     def test_status_exposes_contract_and_tunneld_health(self):
         runtime = PhoneRuntime()
         with patch("phone_harness.runtime.helpers.connection_state", return_value="ready"), \
+                patch("phone_harness.runtime.helpers.frame_source_name", return_value="still-png"), \
                 patch("phone_harness.runtime.sys.platform", "win32"), \
                 patch("phone_harness.windows.transport_mode", return_value="wifi"), \
                 patch("phone_harness.windows.tunneld_status", return_value={"reachable": True, "device_count": 1}), \
                 patch("phone_harness.windows.active_transport", return_value="wifi"):
             status = runtime.status()
         self.assertEqual(status["contract_version"], RUNTIME_CONTRACT_VERSION)
+        self.assertEqual(status["frame_source"], "still-png")
         self.assertEqual(status["tunneld"], {"reachable": True, "device_count": 1})
         self.assertEqual(status["active_transport"], "wifi")
         self.assertGreaterEqual(status["duration_ms"], 0)
@@ -269,6 +591,25 @@ class RuntimeTests(unittest.TestCase):
             {"op": "swipe", "start_x": 5, "start_y": 6, "end_x": 7, "end_y": 8, "duration": 0.35},
         ])
         self.assertEqual(result["backend"], "wda_batch")
+
+    def test_ios_26_keeps_wda_batch_when_wait_stable_follows_actions(self):
+        runtime = PhoneRuntime(observation_ttl=10)
+        elements = [{"text": "1", "source": "accessibility", "name": "one", "x": 10, "y": 20}]
+        with patch("phone_harness.runtime.helpers.elements", return_value=elements):
+            observation = runtime.observe()
+        with patch("phone_harness.runtime.sys.platform", "win32"), \
+                patch("phone_harness.windows.wda_runtime_batch_supported", return_value=True), \
+                patch("phone_harness.windows._wda_action_for_accessibility", return_value={"op": "tap-coordinate", "x": 5, "y": 10}), \
+                patch("phone_harness.windows.run_wda_runtime_batch") as run, \
+                patch("phone_harness.runtime.helpers.wait_stable", return_value=True) as wait_stable:
+            result = runtime.act([
+                {"op": "tap_text", "text": "1", "exact": True},
+                {"op": "wait_stable", "timeout": 2.0, "interval": 0.2, "settle": 2},
+            ], observation_id=observation["observation_id"])
+        run.assert_called_once_with([{"op": "tap-coordinate", "x": 5, "y": 10}])
+        wait_stable.assert_called_once_with(timeout=2.0, interval=0.2, settle=2)
+        self.assertEqual(result["backend"], "wda_batch")
+        self.assertEqual([item["op"] for item in result["results"]], ["tap_text", "wait_stable"])
 
     def test_ios_27_keeps_native_helpers_instead_of_wda_batch(self):
         runtime = PhoneRuntime()

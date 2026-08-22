@@ -51,7 +51,10 @@ function collectPythonSourceRevision(path: string, entries: string[]): void {
     return;
   }
   if (!path.endsWith(".py")) return;
-  entries.push(`${path}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
+  // ctime is filesystem metadata, not source identity. Editors, sync tools and
+  // atomic replacement can change it while preserving the Python source and
+  // mtime, which needlessly tears down the long-lived runtime/WDA session.
+  entries.push(`${path}:${stat.size}:${stat.mtimeMs}`);
 }
 
 export function runtimeSourceRevision(paths: readonly string[]): string {
@@ -61,6 +64,10 @@ export function runtimeSourceRevision(paths: readonly string[]): string {
 }
 
 function defaultRuntimeWatchPaths(): string[] {
+  const hotReload = (process.env.PHONE_HARNESS_MCP_RUNTIME_HOT_RELOAD ?? "")
+    .trim()
+    .toLowerCase();
+  if (!["1", "true", "yes", "on"].includes(hotReload)) return [];
   const sourceDirectory = dirname(fileURLToPath(import.meta.url));
   const mcpRoot = resolve(sourceDirectory, "..");
   const repoRoot = resolve(mcpRoot, "..");
@@ -93,14 +100,18 @@ export class JsonLinePeer {
     output.on("error", (error) => this.failAll(error));
   }
 
-  call(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  call(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = this.timeoutMs,
+  ): Promise<Record<string, unknown>> {
     if (this.closed) return Promise.reject(new Error("phone runtime bridge is closed"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`phone runtime bridge timed out: ${method}`));
-      }, this.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.output.write(`${JSON.stringify({ id, method, params })}\n`);
     });
@@ -151,6 +162,7 @@ export class PythonRuntimeBridge implements RuntimeBridge {
   private child?: ChildProcessWithoutNullStreams;
   private peer?: JsonLinePeer;
   private sourceRevision?: string;
+  private candidateRevision?: string;
   private activeCalls = 0;
   private rotationPending = false;
   private lifecycle: Promise<void> = Promise.resolve();
@@ -160,6 +172,9 @@ export class PythonRuntimeBridge implements RuntimeBridge {
     private readonly timeoutMs = Number(process.env.PHONE_HARNESS_MCP_RUNTIME_TIMEOUT_MS || 120_000),
     private readonly watchPaths: readonly string[] = defaultRuntimeWatchPaths(),
     private readonly processFactory?: RuntimeProcessFactory,
+    private readonly workflowTimeoutMs = Number(
+      process.env.PHONE_HARNESS_MCP_WORKFLOW_TIMEOUT_MS || 1_800_000,
+    ),
   ) {}
 
   async call(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -172,12 +187,21 @@ export class PythonRuntimeBridge implements RuntimeBridge {
       peer = this.peer!;
     });
     try {
-      return await peer.call(method, params);
+      return await peer.call(
+        method,
+        params,
+        method === "workflow" ? this.workflowTimeoutMs : this.timeoutMs,
+      );
     } finally {
       await this.runLifecycle(async () => {
         this.activeCalls = Math.max(0, this.activeCalls - 1);
         this.refreshSourceRevision();
-        if (this.rotationPending && this.activeCalls === 0) await this.stopChild();
+        // Do not tear the runtime down in the successful call's own finally
+        // path. For non-idempotent phone workflows, a cleanup failure here can
+        // replace an already-completed Python result with BRIDGE_UNAVAILABLE,
+        // leaving the caller unable to know whether device actions happened.
+        // Keep the old runtime idle and perform the pending rotation at the
+        // next call entry, before that request is allowed to execute.
       });
     }
   }
@@ -196,10 +220,23 @@ export class PythonRuntimeBridge implements RuntimeBridge {
     const revision = runtimeSourceRevision(this.watchPaths);
     if (this.sourceRevision === undefined) {
       this.sourceRevision = revision;
+      this.candidateRevision = undefined;
       return;
     }
-    if (revision === this.sourceRevision) return;
+    if (revision === this.sourceRevision) {
+      this.candidateRevision = undefined;
+      return;
+    }
+    // Require the same changed revision twice. A transient missing/replaced
+    // file during an editor's atomic save must not recycle Python, WDA and all
+    // hot caches. We already sample at call entry and exit, so this adds no
+    // filesystem pass to the normal gameplay path.
+    if (this.candidateRevision !== revision) {
+      this.candidateRevision = revision;
+      return;
+    }
     this.sourceRevision = revision;
+    this.candidateRevision = undefined;
     if (this.child) this.rotationPending = true;
   }
 

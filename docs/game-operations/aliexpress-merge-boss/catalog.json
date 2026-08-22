@@ -1,0 +1,804 @@
+{
+  "version": 2,
+  "item_families": [
+    {
+      "family_id": "tennis-goods",
+      "display_name": "テニス用品ファミリー",
+      "complete": true,
+      "learned_from": [
+        "order_item_i"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "tennis-goods-lv1",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0ODw0ODw0ODw0ODw0NDw0NDw0ODw0ODw0ODw0ODw0ODwwNDQwOCwsNCgsNCg0NDg0ODw0ODwwODAwPCA0OCgwOCggMBQkMCA0ODw0ODwwOCQ0PCQ4PDAsOCAkNBwgMBQ0ODw0ODgsOCAwOCgwOCgoOBwkMBgcLBQ0ODw0ODwoMCAoNCAsNCQgMBggLBQcLBQ0ODw0ODwwODQkMCAoMCQgLBgcLBgkLCg0ODw0ODw4ODw0ODgsNDAwNDQwNDg0ODw"
+          }
+        },
+        {
+          "level": 2,
+          "identity": "tennis-goods-lv2",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0ODw0ODw0ODw0ODwwNDgcNDAcNDAsNDQ0ODw0ODw0ODw4ODwcMDAUNDAYNDAYMDA0ODw0ODw0ODw0ODgcMCQQMDAYNDAUMDA0ODw0ODw0ODwsNDAsNCgYLCQQLCgQLCw0ODw0ODwwODAwOCwoMCgYJBAQJBAYKCQ4ODwoNDQkNCg0ODAkMCAUIBAgLCAsMDA4ODwYMCwgNCwkLBwYKBAcLBwsMDA0ODg4ODwoNDQMMCwULCQQIBQgLCg4ODw0ODw"
+          }
+        },
+        {
+          "level": 3,
+          "identity": "tennis-goods-lv3",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0ODw0NDwwNDg0ODg0ODw0ODw0ODw0NDg0ODwwNDgUMCgULCgkNDAsNDgwNDg0ODw4ODwkMDAUMCwQLCgMLCgQMCwgMCQwNDAwNDgkMCQYNDAUNDAQMCwMMCwcNCQgMCgcMCwoOCAoOCQUMCgMKCQMJBwULCgUNDAgMDAUNCwkNCAgMBwUKBgIHBQQLCgMLCQ0ODwgNDAQLCgIKCAUKCQgJCQMLCQELCQ0ODw4ODwwODgoNDQwNDg4ODwgMDAQMCw"
+          }
+        },
+        {
+          "level": 4,
+          "identity": "tennis-goods-lv4",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0ODw0ODw0NDg0ODw0ODwkLDAgKCwoLDA0ODw0ODw0ODw0ODwkKCwYICQYJCgYHCQ0ODw0ODwoNDQoMDAgJCgcICgYJCgQICA4ODwoMDQQLCgsODgwODgYHCQUFCAQHCA4ODwcMCwQMCwkODQ0ODgoLCwYGBwQICA0NDgkNDAQNCwUMCgcMCwgLCwYICAUKCQwNDgwODgcMCwMKCAIJBwEHBgUICAYLCg0ODwwODgoMDAYJCQIHBgYJCAwNDgcLCw"
+          }
+        },
+        {
+          "level": 5,
+          "identity": "tennis-goods-lv5",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0NDg0ODwwODAwOCgoMCQsNDAwOCgwOCw0ODwsMDgsNCQwOCQoNBwsNCAsOCAoNCA0ODwkLDAYICQcKBwsNCQ0PCggLBwYIBQ0ODwsMDQUGCAYHCQYICQYHCAUGCAUFCA0ODw0ODwcICQUFBwUGCAQEBwQFBwQFBg0ODw4ODwoNDQQICAUGBwQFBgMEBQUHBw0ODw0ODwUKCQEFBAUKCgIICAAGBQUHCA4ODwwODgMJCAIGBgQKCQEIBwQICAYGCQ"
+          }
+        },
+        {
+          "level": 6,
+          "identity": "tennis-goods-lv6",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0NDw0NDw0ODwwNDgkNDQgNDQgNDQgMDA0ODw0ODw0ODwoNDQgNDAkMDAoMDAkMDA0ODw0ODwwNDgkNDQkMDAsMDQwNDQsMDQ0ODw0ODwwNDggNDAoMDAsNDQsNDQwNDQ0ODw0ODwwNDgkNDQkLCwsMDAsMDQoMDA0ODw4ODwwNDggMDAgMDAgLCwgLDAYLCg4ODwsNDQgLCwYLCgcLCgkMDAkMDAsNDQwNDgcMDAQICQYICA0ODg0ODw4ODw4ODw"
+          }
+        },
+        {
+          "level": 7,
+          "identity": "tennis-goods-lv7",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0NDw0NDw0ODw0NDgkMDAcMDAcMDAcMCw0ODw0ODw0ODwoNDQcMDAkLDAoMDAgMDA0ODw0ODw0NDggMDAkMDAsMDQwNDQsMDQ0ODw0ODwwNDgcMDAoMDAwNDQsMDQwNDQ0ODw0ODwwNDgcMDAgLCwoLDAsMDQkLCw0ODw4ODwoNDQYLCwYLCwkMCgwOCgsNCg0ODwkMDAUJCgUJCQgLCgwPCQ0PCwsOCQsMDQYMCwMICAgJCg0ODQoNCAwOCgkNBw"
+          }
+        },
+        {
+          "level": 8,
+          "identity": "tennis-goods-lv8",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0NDgcMCwUMCgcMCwQLCQkMDA0NDw0NDwkNDAUMCgoMDAsMDQkMDAQLCQcNCwgNDAcNCwcMCwwMDQsMDQkMDAUMCgYLCgcMCwkNDAYMCgsMDAsMDAYMCwYJCQoLCwsMDA0ODgcMCwcMCwcLCgYMCggJCgsMDAsMDA0ODw0ODggNDAULCgYMCgYJCQsMDAoMDA0ODw4ODw4ODwcMCwULCgYMCwYLCgULCg0ODw0ODwoMCgQJCAMIBwMHBQcLCgwODg"
+          }
+        },
+        {
+          "level": 9,
+          "identity": "tennis-goods-lv9",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "0ODwwNDgkNDQwNDg0NDgwNDgwNDg0ODwsMDQULCgULCggNDAsNDQ0ODg0NDgkLCwgMDAYKCgcKCgUJCgQJCQULCgcMCwQLCggMDAkMCwsNCwkLCggJCgcKCgUJCgUKCgkMDAkMCgkLCQoMCQsMCgsNCwoMCwQHCAoMDAgLCgsNCwsLCQoMCgsNCgkLCgMHCA0ODwgKCgUICAcJCQkLCgsNCgYJCQUJCQ0ODwcICgUGCAQGCAUICAcKCQQICAcLCw"
+          }
+        },
+        {
+          "level": 10,
+          "identity": "tennis-goods-lv10",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "8PDQ8PDw4OCwwMBg4NCA0MBg0MCg8PDw4ODA8ODA0NCwkMBwsLBQgLBwwKBA0LBQ4ODAoLBw0MBQ4KAgwLBQ0OCA4MBQ4MBA8PDwsMCgoKBAwKAw8NBA4LAw0LAw4LAw8PDw8NCwoLBgsNBw4LAw0KAw0KAw0KAg8PDw8PDQ4MBA4LAw4LAw0KAg4KAg0KAg8PDwsMDAsJAw4NBAwJAgwHAgwLBQwMBw0NDQUGCQoKBw8PBQwIAggGBgwPCwwOCg"
+          }
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 4,
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODw0ODw0ODw0ODw0ODw0ODw0ODg0NDw0NDg0ODw0ODw0ODw0ODw0ODw0NDg0ODg0ODw0NDg0MDQ0MDA0MDA0MDA0LCA0ODw0LCwwIBQ0JBQ0KCAwIBgoFAw0IAw0NDQ4LBg8OBw8OCAwKCQ0NCwwKCQ0KCQ0MCQ8NBw8NBw8NBw4MBwsIBAsHAw0MCg4MBw8MBQ8LBQ8LBQ8MBg8OCAwJAwsGAg0LCA8MBw8ODA4LBw4LBA8MBQ0JBAoGAg"
+          }
+        },
+        {
+          "level": 5,
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODw0ODw0ODw0ODw0ODw0ODw0ODg0NDgwLDA0NDg0ODw0NDw0NDg0NDw0NDgsJCAwHBAsJCQwNDQ0NDQ0NDg0ODw0NDgsJCQoFBAsJCA0NDA4NCw4NCg0NCw0NDQ0ODw0MCA8OBw8OCg4NDA4NDQ4ODA8NCg0NDQ4KBQ8JBA8LBA8NBg8OCA4NDA0NDQ0MCg8IBA8KCA8MCQ8JBQ8LBQ8LBQ0MCg4MCA4GAw4IBg8MCQ8IBw4HBA8KBA0KBw"
+          }
+        },
+        {
+          "level": 6,
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODw0ODw0ODg0ODg0ODg0ODg0ODg0ODw0NDg0NDwwNDwwODw0ODw0ODw0ODg0NDw0ODw0NDg0NCw0LCQwKCQwLCwsLCw0ODw0NDw4NCQ8NBg4NCQ4LBAwIBQcJCg0ODw0NCg8KBA4LCA8OCQ8OBw4KBQkIBw0NDQ8KBg8GBQ4GBQ4IBQ8NBw8LBg0KCA4NCQ8JBA8GBQ8GBQ0HBA8NBw4KBg0LCw4MBw4MBg0JBw0GAw4LBg8NBgwIBA0KCQ"
+          }
+        },
+        {
+          "level": 7,
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODw0ODw0ODw0ODw0ODw0ODw4ODw0ODw0NDg0NDQ0NDg0NDg0ODwkKCwYHCA0ODw0NDg4NDA0NDQ0NDg0ODwYICQMFBg0ODg0ODw0MCg0LCAsKCQsMDQYICwUHCQ0ODw0MDQ8LBg8NBw4MBw0LCAwLCgoKCQ0ODw0IBg8LBQ4MBw8JBg8KBg8OBw8NBw0LCw0FAw0JBQsGBAwGBQwIBQ0JBQ8NBw4JBwwFBAoFAwsFAwoFAwoFAwoFAw8MBg"
+          }
+        },
+        {
+          "level": 8,
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODw0ODg0ODw0ODw0ODw0ODw0NDg0NDg0NDg0ODwwMDQwKCgsJCQwMDQ0ODg0NDg0ODw4KCgwFBAoGBAwHBAoGBQsJCA0ODw0MDA4HBgkJCQsKCgoGBQkEAgcCAQwMDA8KBwwGBAgGBQgJCwoLDQsHBgwEAg0KCAwIBQwJBg8OCAoGBQcICg4IBwkEBAwIBgwIBgwIBg0KCA4LBgwGBAsGBQQGCAsGBQ0LCQ0LCgsGBAwIBQ4KBgoFBAYGBg"
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "cheering-spectator",
+      "display_name": "応援観戦ファミリー",
+      "complete": true,
+      "learned_from": [
+        "board_item_i",
+        "user_confirmation"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "cheering-spectator-lv1",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw0ODwwNDg0NDQ0NDgwNDwwNDw0ODw4PDw0ODw0NDwwOCAkNCQwMCw0MDA0ODw4PDw4ODwsNDAgOCgwMCQ0LBwwMCw0ODw4PDw0ODwwNDQ0NCw4MBw0LBwwNDg0ODw4PDw0ODw0ODw0ODwwKDwoJDA0ODg0ODw4PDw0ODw0ODw0NDggFCgwMDgoNDgkMDg4PDw4PDw0ODw0ODw0NDg0ODwkMDgwODw4PDw4PDw4PDw4PDw4PDw4PDw4PDw8PDw"
+          }
+        },
+        {
+          "level": 2,
+          "identity": "cheering-spectator-lv2",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw8PDQ8PDg8PDw8PDg8PDg8PDw8PDQ4PDw8PDQ8PDw8PDw0LCg0KAw8ODA8PDg4PDw8PDQ8PDw4NDw0KBgsLAg0MBQ8ODQwODg8PDg8PDQsMCwsJBAgLBAkKCg8PDg4PDw8PDQ8NCAoNCgcMBQcJBQ0ODg8PDg4PDw8PDQ8ODwoMCQsNCw8PDw8OCw8NBg4PDw8PDg8PDg8PDQ8PDg8PDg8NBg8NCQ4PDw4PDw4PDg8PDg4PDg4PDg4PDQ4PDw"
+          }
+        },
+        {
+          "level": 3,
+          "identity": "cheering-spectator-lv3",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4ODw0NDwwNDw0NDQ0NDQ0NDw0ODw4PDw0ODwwMDA0MCQwMDA0MDA0ODg0ODw4PDw0ODwwMCg4OBA4OBg4NBw0LCQwNDw0ODg4ODw0NCgsNBAoMCA0NBgoHBwsKDQ4PDw4ODw0OCQsOCQwMCA0LBQwNDQ0ODw4PDw4ODw4NCA4OBw4NCQ0NDAsNDwkMDg4PDw4PDw0ODg0ODg0ODw0ODwoMDgsNDw4PDw4PDw4PDw4PDw4PDw4PDw4PDw4PDw"
+          }
+        },
+        {
+          "level": 4,
+          "identity": "cheering-spectator-lv4",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4ODw0NDg0NDw0NCw0NDA0NDw0ODg4PDw0ODw0NDw0NDgwOCA0MBgwNDw0ODw4PDw4ODw0OCwwOCgwNDQ8NDA0NCQ0ODgwODg4ODw0OCgcPBwoNCw4NDw4MBQ0MDA4PDw4ODw4ODAgOBwYPCA0NBg0LBwwODw4PDw4PDw0ODQ0OCQ0NBg4KBQsMDgkMDg4PDw4PDw0ODw4ODw4NCw0ODgoMDgsNDg4PDw4PDw4PDw4PDw4PDw4PDw4PDw4PDw"
+          }
+        },
+        {
+          "level": 5,
+          "identity": "cheering-spectator-lv5",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDw0NDg0NDg0ODgwMDgwNDg4PDw4PDw0ODw0NDg0ODwwMDwoJDQsKDQ0NDg4PDw0ODw0ODw0NDA0MCA8NBgsKCwwNDg4PDw4ODwsODQsNBg8LAgwMAwwLBw0ODw4PDw4ODQsNBQoOBg8LAgcOBwsMBg4ODw4PDw4ODQsHAQ0JAA4LAgwLAwsLCgoMDw4PDw4PDw0NDQ0NCw0NDQ0NDAkMDgsNDg4PDw4PDw4PDw4PDw4PDw4PDwwODw4PDw"
+          }
+        },
+        {
+          "level": 6,
+          "identity": "cheering-spectator-lv6",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDw0ODg0NDg0NDgwMDg0ODg4ODw4PDw0ODwwMDgoIDAsJDQkGDAwKDQ0ODw4PDw0NDwwLDgoKDAwLBwwJDAsIDQ0ODg0ODw0ODwsKDQoMDAoMBAkLBAcLCg0ODw4PDw0ODwsKCwwLBwoMBQgNBAMMBgwODg4PDw4ODwwMCAwKBAsLCAwMCAgMCwoMDg4PDw4PDw0NCgwMDA0ODw0ODwoMDgsNDg4PDw4PDw4PDw4PDw4PDw4PDwwODw4PDw"
+          }
+        },
+        {
+          "level": 7,
+          "identity": "cheering-spectator-lv7",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDw0NDg0NDA0NDg0NDg0NDg4ODw4PDw0ODw0NDg4NCA0NDQ0NDQ0MCg0ODw4PDw0ODwwLDg0LCgwJDQwMDg0NDg0ODw0ODg0ODwkMCgwIBAoICAwMDQ4JDA0MDQ4PDw4ODgkNCgkNBgcJCQwNCwsMCw0NDg4PDw0ODQ4MBwcLCAMJCQoLDQwNDgoMDg4PDw0ODgwNCA0LCwoMDQkLDgkMDgoNDg4PDw4PDw4PDw4PDw8PDw4PDw0ODw4PDw"
+          }
+        },
+        {
+          "level": 8,
+          "identity": "cheering-spectator-lv8",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDw0NDw0NDg0NDgwNDw0ODw4ODw4PDw0ODw0ODg0LCw8ICw0MCg0NDg0ODw8PDw0NDgsJDQsJCQcJBwkLCQ8HCwwNDg0ODw0ODwsKCQwLBAwOBAcNCAsJCQ0NDA4PDw4ODw0NBQkMBwwJCA0MAgsJCQwMDg4PDw4ODw0NDA4LBQoLBQgJBAoJCwkMDg4PDw4PDw0ODw0ODQ4MCQ0MCgkMDgsNDg4PDw4PDw4PDw4PDw4PDw4PDwwODw4PDw"
+          }
+        },
+        {
+          "level": 9,
+          "identity": "cheering-spectator-lv9",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDw0ODw0ODw0NDw0MDg0ODw4PDw4PDw0ODw0NDg0OCw4LCw4HCw0HCg0NDg4PDw0ODw4OCg8PAw0JCgwHBQwEAw0LDQ4PDw0ODw4MBg8OAg8NBQ0MAw0LBA0NDw8PDwwODgsKCA8JBgkNAwgKAwwJCA4PDw8PDwsODQcNCQoJCQcKCQkHCAsLDQoNDw4PDw4ODwoOCwYOCAcMCQoMDQkMDgoNDg8PDw4PDw4PDw4ODw4PDw4PDwwODw4PDw"
+          }
+        },
+        {
+          "level": 10,
+          "identity": "cheering-spectator-lv10",
+          "visual_descriptor": {
+            "version": 1,
+            "size": [
+              8,
+              8
+            ],
+            "rgb4_b64": "4PDw4PDwwNDQwNDg0NDg0NDg0ODw4PDw4PDw0ODgoLCQkLCAsMCQsLCQsMCw0ODg4PDw0ODQ0LDAwJCg4LCQ4KCg0JBAwMCw0ODw0ODg4MBg4KBA4KBw4JBwwJBQ0NDg0ODw0ODw4MDA8GCQ4JBw0LBgsIBg0NDQ8PDw0ODQ4MBg8JBw8JCQwKCQsJBgoMDQ8PDw4ODw0NDA4NCQ4NBg0LBgkMDgsNDw8PDw4PDw4PDw4PDw4PDw0ODwwODw4PDw"
+          }
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 7
+        },
+        {
+          "level": 8
+        }
+      ]
+    },
+    {
+      "family_id": "viewing-equipment",
+      "display_name": "鑑賞機器ファミリー",
+      "complete": true,
+      "learned_from": [
+        "order_item_i"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "viewing-equipment-lv1"
+        },
+        {
+          "level": 2,
+          "identity": "viewing-equipment-lv2"
+        },
+        {
+          "level": 3,
+          "identity": "viewing-equipment-lv3"
+        },
+        {
+          "level": 4,
+          "identity": "viewing-equipment-lv4"
+        },
+        {
+          "level": 5,
+          "identity": "viewing-equipment-lv5"
+        },
+        {
+          "level": 6,
+          "identity": "viewing-equipment-lv6"
+        },
+        {
+          "level": 7,
+          "identity": "viewing-equipment-lv7"
+        },
+        {
+          "level": 8,
+          "identity": "viewing-equipment-lv8"
+        },
+        {
+          "level": 9,
+          "identity": "viewing-equipment-lv9"
+        },
+        {
+          "level": 10,
+          "identity": "viewing-equipment-lv10"
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 4
+        },
+        {
+          "level": 5
+        },
+        {
+          "level": 6
+        },
+        {
+          "level": 7
+        },
+        {
+          "level": 8
+        }
+      ]
+    },
+    {
+      "family_id": "fishing-supplies",
+      "display_name": "釣り用品グループ",
+      "complete": true,
+      "learned_from": [
+        "board_item_i"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "fishing-supplies-lv1"
+        },
+        {
+          "level": 2,
+          "identity": "fishing-supplies-lv2"
+        },
+        {
+          "level": 3,
+          "identity": "fishing-supplies-lv3"
+        },
+        {
+          "level": 4,
+          "identity": "fishing-supplies-lv4"
+        },
+        {
+          "level": 5,
+          "identity": "fishing-supplies-lv5"
+        },
+        {
+          "level": 6,
+          "identity": "fishing-supplies-lv6"
+        },
+        {
+          "level": 7,
+          "identity": "fishing-supplies-lv7"
+        },
+        {
+          "level": 8,
+          "identity": "fishing-supplies-lv8"
+        },
+        {
+          "level": 9,
+          "identity": "fishing-supplies-lv9"
+        },
+        {
+          "level": 10,
+          "identity": "fishing-supplies-lv10"
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 6
+        },
+        {
+          "level": 7
+        },
+        {
+          "level": 8
+        }
+      ]
+    },
+    {
+      "family_id": "fish-plush",
+      "display_name": "フィッシュプラッシュグループ",
+      "complete": true,
+      "learned_from": [
+        "board_item_i",
+        "device_panel"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "fish-plush-lv1",
+          "display_name": "エビ"
+        },
+        {
+          "level": 2,
+          "identity": "fish-plush-lv2",
+          "display_name": "カニ"
+        },
+        {
+          "level": 3,
+          "identity": "fish-plush-lv3",
+          "display_name": "チョウザメ"
+        },
+        {
+          "level": 4,
+          "identity": "fish-plush-lv4",
+          "display_name": "フグ"
+        },
+        {
+          "level": 5,
+          "identity": "fish-plush-lv5",
+          "display_name": "タコ"
+        },
+        {
+          "level": 6,
+          "identity": "fish-plush-lv6",
+          "display_name": "ウミガメ"
+        },
+        {
+          "level": 7,
+          "identity": "fish-plush-lv7"
+        },
+        {
+          "level": 8,
+          "identity": "fish-plush-lv8"
+        },
+        {
+          "level": 9,
+          "identity": "fish-plush-lv9"
+        },
+        {
+          "level": 10,
+          "identity": "fish-plush-lv10"
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 5
+        },
+        {
+          "level": 6
+        },
+        {
+          "level": 7
+        },
+        {
+          "level": 8
+        }
+      ]
+    },
+    {
+      "family_id": "book",
+      "display_name": "ブックファミリー",
+      "complete": true,
+      "learned_from": [
+        "order_item_i"
+      ],
+      "levels": [
+        {
+          "level": 1,
+          "identity": "book-lv1"
+        },
+        {
+          "level": 2,
+          "identity": "book-lv2"
+        },
+        {
+          "level": 3,
+          "identity": "book-lv3"
+        },
+        {
+          "level": 4,
+          "identity": "book-lv4"
+        },
+        {
+          "level": 5,
+          "identity": "book-lv5"
+        },
+        {
+          "level": 6,
+          "identity": "book-lv6"
+        },
+        {
+          "level": 7,
+          "identity": "book-lv7"
+        },
+        {
+          "level": 8,
+          "identity": "book-lv8"
+        },
+        {
+          "level": 9,
+          "identity": "book-lv9"
+        },
+        {
+          "level": 10,
+          "identity": "book-lv10"
+        }
+      ],
+      "generation_producers": [
+        {
+          "level": 4
+        },
+        {
+          "level": 5
+        },
+        {
+          "level": 6
+        },
+        {
+          "level": 7
+        },
+        {
+          "level": 8
+        }
+      ]
+    },
+    {
+      "family_id": "romeo-juliet-props",
+      "display_name": "ロミオとジュリエット小道具ファミリー",
+      "complete": true,
+      "levels": [
+        {
+          "level": 1,
+          "identity": "romeo-juliet-props-lv1"
+        },
+        {
+          "level": 2,
+          "identity": "romeo-juliet-props-lv2"
+        },
+        {
+          "level": 3,
+          "identity": "romeo-juliet-props-lv3"
+        },
+        {
+          "level": 4,
+          "identity": "romeo-juliet-props-lv4"
+        },
+        {
+          "level": 5,
+          "identity": "romeo-juliet-props-lv5"
+        },
+        {
+          "level": 6,
+          "identity": "romeo-juliet-props-lv6"
+        },
+        {
+          "level": 7,
+          "identity": "romeo-juliet-props-lv7"
+        },
+        {
+          "level": 8,
+          "identity": "romeo-juliet-props-lv8"
+        },
+        {
+          "level": 9,
+          "identity": "romeo-juliet-props-lv9"
+        },
+        {
+          "level": 10,
+          "identity": "romeo-juliet-props-lv10"
+        }
+      ],
+      "learned_from": [
+        "order_item_i"
+      ]
+    }
+  ],
+  "merge_transitions": [
+    {
+      "input_identity": "エビ",
+      "input_level": 1,
+      "output_identity": "カニ",
+      "output_level": 2,
+      "evidence": "device_confirmed"
+    },
+    {
+      "input_identity": "カニ",
+      "input_level": 2,
+      "output_identity": "チョウザメ",
+      "output_level": 3,
+      "evidence": "device_panel_next_result"
+    },
+    {
+      "input_identity": "フグ",
+      "input_level": 4,
+      "output_identity": "タコ",
+      "output_level": 5,
+      "evidence": "device_confirmed"
+    },
+    {
+      "input_identity": "タコ",
+      "input_level": 5,
+      "output_identity": "ウミガメ",
+      "output_level": 6,
+      "evidence": "device_panel_next_result"
+    }
+  ],
+  "producers": [
+    {
+      "identity": "プロフェッショナルフィッシングギアボックス",
+      "level": 8,
+      "outputs_complete": true,
+      "possible_outputs": [
+        {
+          "identity": "fishing-supplies-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "fish-plush-lv1",
+          "level": 1,
+          "source": "producer_i+observed_emission",
+          "observations": 2
+        },
+        {
+          "identity": "fishing-supplies-lv2",
+          "level": 2,
+          "source": "producer_i"
+        },
+        {
+          "identity": "fish-plush-lv2",
+          "level": 2,
+          "source": "producer_i"
+        }
+      ],
+      "learned_from": [
+        "producer_i",
+        "device_panel",
+        "user_rules"
+      ]
+    },
+    {
+      "identity": "マスターテニスバッグ",
+      "level": 8,
+      "visual_family_id": "tennis-goods",
+      "outputs_complete": true,
+      "possible_outputs": [
+        {
+          "identity": "tennis-goods-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "cheering-spectator-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "tennis-goods-lv2",
+          "level": 2,
+          "source": "producer_i"
+        },
+        {
+          "identity": "cheering-spectator-lv2",
+          "level": 2,
+          "source": "producer_i"
+        }
+      ],
+      "learned_from": [
+        "producer_i",
+        "user_confirmation"
+      ]
+    },
+    {
+      "identity": "最高峰の印刷物",
+      "level": 8,
+      "outputs_complete": false,
+      "possible_outputs": [
+        {
+          "identity": "book-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "visual-stamp-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "book-lv2",
+          "level": 2,
+          "source": "producer_i"
+        },
+        {
+          "identity": "visual-stamp-lv2",
+          "level": 2,
+          "source": "producer_i"
+        }
+      ],
+      "learned_from": [
+        "producer_i"
+      ]
+    },
+    {
+      "identity": "縦型フィルムカメラ",
+      "level": 8,
+      "outputs_complete": true,
+      "possible_outputs": [
+        {
+          "identity": "viewing-equipment-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "romeo-juliet-props-lv1",
+          "level": 1,
+          "source": "producer_i"
+        },
+        {
+          "identity": "viewing-equipment-lv2",
+          "level": 2,
+          "source": "producer_i"
+        },
+        {
+          "identity": "romeo-juliet-props-lv2",
+          "level": 2,
+          "source": "producer_i"
+        }
+      ],
+      "learned_from": [
+        "producer_i"
+      ]
+    }
+  ]
+}
