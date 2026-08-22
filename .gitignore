@@ -3,6 +3,7 @@ __pycache__/
 dist/
 *.egg-info/
 .venv/
+desktop-monitor/node_modules/
 tools/windows-wda/node_modules/
 tools/windows-wda/ipaside-src/
 tools/windows-wda/bin/

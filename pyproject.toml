@@ -13,6 +13,8 @@ dependencies = [
 
 [project.scripts]
 phone-harness = "phone_harness.run:main"
+phone-harness-monitor = "phone_harness.monitor:main"
+phone-harness-monitor-web = "phone_harness.monitor_web:main"
 
 [build-system]
 requires = ["hatchling"]

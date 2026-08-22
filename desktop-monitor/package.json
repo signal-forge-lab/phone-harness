@@ -1,0 +1,46 @@
+{
+  "name": "phone-harness-desktop-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check server-process.cjs && node --check desktop-control.cjs && node --check window-state.cjs",
+    "smoke:ui": "node scripts/cdp-smoke.cjs",
+    "smoke:lifecycle": "node scripts/cdp-monitor-lifecycle.cjs",
+    "smoke:harness": "node scripts/cdp-harness-lifecycle.cjs",
+    "smoke:developer": "node scripts/cdp-developer-smoke.cjs",
+    "build:exe": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "dockview": "8.2.0"
+  },
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.iw.phoneharness.monitor",
+    "productName": "Phone Harness Monitor",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "server-process.cjs",
+      "desktop-control.cjs",
+      "window-state.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/dockview/dist",
+        "to": "dockview"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "artifactName": "PhoneHarnessMonitor-${version}.${ext}"
+    }
+  }
+}
