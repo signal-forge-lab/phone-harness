@@ -7,18 +7,20 @@ The harness now has two host transports:
 
 - **macOS** — iPhone Mirroring + Apple Vision OCR + CGEvents.
 - **Windows** — `pymobiledevice3` CoreDevice/WDA + WDA accessibility-first
-  screen reading + local PaddleOCR PP-OCRv6 fallback.
+  screen reading. Sparse accessibility trees are augmented by local PaddleOCR
+  PP-OCRv6; OCR remains the full fallback when WDA accessibility is unavailable.
 
-> **Windows development status:** USB real-device acceptance is verified on iOS
-> 26.6 for capture, accessibility, OCR fallback, tap, drag and typing. Optional
-> Wi-Fi transport is implemented through pymobiledevice3 tunneld; its final
-> disconnected-USB acceptance is tracked separately.
+> **Windows development status:** USB and disconnected-USB Wi-Fi real-device
+> acceptance are verified on iOS 26.6. Wi-Fi validation covers RemotePairing,
+> privileged tunneld/RSD, WDA accessibility, OCR fallback, batched WDA input,
+> the dedicated MCP boundary, OAuth, Secure MCP Tunnel and a ChatGPT-originated
+> `phone_status` call.
 
 On macOS the iPhone Mirroring window is the transport. On Windows the harness
 talks to the real phone through `pymobiledevice3` over USB by default or an
 explicit Wi-Fi RSD tunnel. Windows prefers WDA accessibility labels/values and
-bounds, falling back to local OCR only when accessibility cannot describe the
-screen.
+bounds. Sparse accessibility trees are augmented with local OCR; if WDA
+accessibility is unavailable, OCR becomes the full fallback.
 
 ```
   ● agent: wants to open Weather
@@ -30,6 +32,31 @@ screen.
 ```
 
 **Your phone, driven by an agent.**
+
+## Monitor
+
+The recommended operational monitor is the responsive LAN web UI:
+
+```powershell
+tools\start_phone_harness_monitor_web.cmd
+```
+
+It listens on TCP `17678` and writes its detected URLs to
+`%TEMP%\phone-harness\monitor\server.json`. The web UI is responsive for a
+desktop, tablet or phone and shows trace timeline, current capture preview,
+local analysis timings, structured host/tool decisions and the Human Teaching
+answer interface. It exposes no direct phone-action HTTP API.
+
+If another device on the same Private LAN cannot connect, run the one-time
+administrator helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\enable_phone_harness_monitor_lan_firewall.ps1
+```
+
+That rule is restricted to Private profile, TCP 17678, LocalSubnet and the
+phone-harness `pythonw.exe`. Remove it with the adjacent
+`disable_phone_harness_monitor_lan_firewall.ps1` helper.
 
 ## Setup
 
@@ -109,9 +136,18 @@ alive instead of restarting it for every action.
 
 That gives an agent the same three primitives on either host:
 
-- **See** — macOS uses Apple Vision OCR. Windows uses WDA accessibility first
-  and PaddleOCR PP-OCRv6 medium only as fallback. Returned elements have
-  tap-ready centers.
+- **See** — macOS uses Apple Vision OCR. Windows uses WDA accessibility first,
+  augments sparse trees with PaddleOCR PP-OCRv6 medium, and uses OCR alone when
+  accessibility is unavailable. Large screenshots are downscaled to a
+  1600-pixel long edge for OCR inference and the coordinates are mapped back to
+  full screen pixels. Returned elements have tap-ready centers. Callers may
+  optionally scope observation to an absolute `{x,y,w,h}` region to reduce
+  semantic/OCR/image work without changing the returned coordinate system.
+- **See visually** — icon/layout/grid work can skip OCR entirely and use a
+  low-resolution JPEG profile. One shared frame supplies OCR, crops and image
+  output without redundant device captures. Exact visual identity uses a
+  coarse-to-fine path: blurry images shortlist candidates; detailed crops make
+  the final decision.
 - **Act** — macOS uses CGEvents. Windows uses CoreDevice Universal HID on iOS
   27+ and the provisioned WDA fallback on iOS 26. Screenshot pixels are
   converted to the backend's coordinate system at the transport boundary.
@@ -190,7 +226,9 @@ PY
 
 - One phone, one active session.
 - Windows defaults to USB. `PHONE_HARNESS_TRANSPORT=wifi` uses an RSD exposed
-  by a Wi-Fi-only local `tunneld`; `auto` prefers USB then tries tunneld.
+  by standard local `tunneld`; `auto` prefers USB then tries tunneld. Keep all
+  tunneld discovery monitors enabled and select Wi-Fi in phone-harness rather
+  than disabling RemotePairing/usbmux/mobdev2 monitors.
 - Native Windows CoreDevice touchscreen and virtual-keyboard input requires iOS
   27.0+ on the tested/current service. iOS 26 uses the provisioned persistent
   WDA fallback for tap/drag/scroll/type.

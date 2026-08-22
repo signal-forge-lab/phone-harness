@@ -77,11 +77,31 @@ TLS-PSK APIs available there. Do not switch the main phone-harness/PaddleOCR
 environment away from its verified Python 3.12 interpreter just for tunneld.
 
 Start pymobiledevice3 `tunneld` from an **elevated** terminal and leave it
-running:
+running. Use the standard monitor set:
 
 ```powershell
-.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 remote tunneld `
-  --no-usb --wifi --no-usbmux --no-mobdev2 --protocol tcp
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 remote tunneld
+```
+
+Do **not** add `--no-usb --no-usbmux --no-mobdev2` to make the runtime
+"Wi-Fi-only". Those flags suppress discovery paths that the Windows
+RemotePairing flow may still need. The verified failure mode is a listening
+tunneld whose `/` endpoint stays `{}` even though Bonjour mobdev2 still sees
+the iPhone. Select Wi-Fi with `PHONE_HARNESS_TRANSPORT=wifi` instead.
+
+If the phone was previously paired but `bonjour remotepairing` no longer finds
+it, perform a one-time USB bootstrap from the same Python 3.14 environment:
+
+```powershell
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 lockdown remotepairing --pair
+```
+
+Approve any physical trust/pairing prompt, then unplug USB and verify:
+
+```powershell
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 usbmux list
+.\.venv-tunneld\Scripts\python.exe -m pymobiledevice3 bonjour remotepairing
+Invoke-RestMethod http://127.0.0.1:49151/
 ```
 
 Then choose the transport in the terminal that runs phone-harness:
@@ -94,10 +114,11 @@ $env:PHONE_HARNESS_UDID = "YOUR_DEVICE_UDID"
 ```
 
 `auto` prefers USB when the selected phone is attached and otherwise falls back
-to a device exposed by local tunneld. For an explicit `wifi` session, use the
-Wi-Fi-only tunneld command above so its RSD listing cannot resolve back to a USB
-tunnel for the same phone. Initial Trust/Developer Mode/WDA provisioning and
-recovery remain USB-first operations.
+to a device exposed by local tunneld. For an explicit `wifi` session, keep the
+standard tunneld running and set `PHONE_HARNESS_TRANSPORT=wifi`; the runtime
+reads only the RSD exposed by tunneld and does not fall back to USB. Initial
+Trust/Developer Mode/WDA provisioning and RemotePairing bootstrap remain
+USB-first recovery operations.
 
 Keep this tunneld process alive rather than restarting it per phone operation.
 phone-harness never auto-elevates or starts it implicitly. If the tunnel drops,

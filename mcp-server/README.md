@@ -15,6 +15,52 @@ This server is intentionally **Modern-only** and uses MCP protocol
 - `phone_act` — one bounded write/action batch. Pass the `observation_id` from
   `phone_observe` for semantic or observation-derived actions.
 
+`phone_act` can also run one named bounded workflow without adding a fourth MCP
+tool. The legacy conservative workflow remains available:
+
+```json
+{
+  "op": "run_workflow",
+  "name": "merge_boss_once",
+  "max_producer_taps": 4,
+  "max_relaxed_checks": 3
+}
+```
+
+The order-aware multi-action contract is already exposed as:
+
+```json
+{
+  "op": "run_workflow",
+  "name": "merge_boss_turn",
+  "max_cycles": 10,
+  "max_merges": 24,
+  "max_emissions": 20,
+  "uncertain_burst_size": 6,
+  "max_recoveries": 3
+}
+```
+
+`run_workflow` must be the only action in that `phone_act` request. It is
+forwarded to the already-running Python bridge, so the workflow reuses the same
+`PhoneRuntime`, WDA state, FrameBroker and OCR model instead of starting a new
+Python process or returning to ChatGPT between each small step.
+
+`merge_boss_turn` is designed to batch independent merge drags, predict higher-
+level chain merges, produce several items inside one local turn, and deliver
+currently complete customer orders. Its live perception layer is deliberately
+disabled until the next real-device session calibrates the full horizontal
+customer strip and each producer's upper-left `i` information view. Until then,
+calling it returns a structured calibration-required result and performs no
+phone action.
+
+`phone_observe` also accepts an optional absolute-pixel `region` object
+`{x,y,w,h}`. Region observation limits accessibility/OCR work and optional image
+content to that rectangle while returned element coordinates remain full-screen
+coordinates for follow-up actions. Changing region creates a fresh observation
+cache scope. After changing this tool schema, rebuild/restart the local MCP and
+rescan/reconnect the ChatGPT App so the host refreshes its cached tool schema.
+
 The Node process owns one JSONL Python child. The child owns one `PhoneRuntime`,
 so OCR, WDA readiness, transport metadata and observation caches remain warm.
 Before each runtime call the Node bridge checks `python_bridge.py` and
@@ -29,6 +75,22 @@ Additional Python source roots can be included in the revision check with
 `PHONE_HARNESS_MCP_RUNTIME_WATCH_PATHS`, using the platform path delimiter
 (`;` on Windows, `:` on macOS/Linux). This is normally unnecessary because
 `pymobiledevice3` is currently invoked as a fresh subprocess for device calls.
+
+`phone_observe` also supports a visual-only path for image/layout/icon work:
+
+```text
+mode=visual
+image_profile=glance|coarse|balanced|detail|full
+region={x,y,w,h}  # optional absolute phone-screen rectangle
+reuse_observation_id=<current visual observation id>  # optional refinement
+```
+
+Visual mode skips accessibility/OCR and returns image content. Coarse profiles
+are JPEG derivatives from one shared physical frame; `full` is lossless PNG.
+The default remains semantic observation for backward compatibility.
+`reuse_observation_id` lets a later call ask for a clearer derivative of that
+same captured frame rather than taking another screenshot; retained-frame reuse
+is bounded to 30 seconds.
 
 ## Install
 
