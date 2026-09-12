@@ -11,3 +11,24 @@ tools/windows-wda/profiles/
 tools/windows-wda/signed-wda/
 tools/windows-wda/.downloads/
 desktop-monitor/dist-noedit/
+
+# Local credentials and signing material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.plist.local
+
+# Local runtime / device / tunnel state
+.runtime/
+.local/
+.workbridge/
+*.log
+*.pid
+*profile*.local.*
+
+# Environment-specific handoff/runbooks are not public source artifacts
+docs/handoffs/
