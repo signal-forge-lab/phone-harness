@@ -10,6 +10,7 @@ For day-to-day agent usage, also read `SKILL.md`.
 
 - Windows 11
 - Python 3.12 for the normal phone-harness runtime
+- PowerShell 7 (`pwsh`) for the MCP configuration/lifecycle wrappers
 - Apple Devices and the Apple USB/device driver layer
 - `pymobiledevice3` for USB/Wi-Fi CoreDevice, RSD, HID, and WDA transport
 - PaddlePaddle CPU + PaddleOCR when OCR fallback is required
@@ -85,11 +86,11 @@ Re-run provisioning when the local development profile expires or the runner mus
 
 The MCP server is in `mcp-server/`. Public source contains the transport/authentication implementation but not real credentials or environment-specific tunnel configuration.
 
-Use the repository wrappers for local configuration and startup:
+Use PowerShell 7 and the repository wrappers for local configuration and startup:
 
 ```powershell
-.\tools\configure_phone_harness_mcp.ps1
-.\tools\start_phone_harness_mcp.ps1
+pwsh -NoProfile -File .\tools\configure_phone_harness_mcp.ps1
+pwsh -NoProfile -File .\tools\start_phone_harness_mcp.ps1
 ```
 
 When prompted for environment-specific values, use your own local configuration. Keep owner tokens, control-plane/API keys, OAuth credentials, tunnel resource identifiers, and private URLs outside Git. Secret values should come from an external secret store or process-local environment rather than a checked-in configuration file.
@@ -97,8 +98,8 @@ When prompted for environment-specific values, use your own local configuration.
 Top-level lifecycle helpers are also available:
 
 ```powershell
-.\tools\start_phone_harness.ps1
-.\tools\stop_phone_harness.ps1
+pwsh -NoProfile -File .\tools\start_phone_harness.ps1
+pwsh -NoProfile -File .\tools\stop_phone_harness.ps1
 ```
 
 Environment-specific troubleshooting and recovery notes must be kept outside the public repository.
