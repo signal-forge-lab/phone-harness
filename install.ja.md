@@ -10,6 +10,7 @@
 
 - Windows 11
 - 通常の phone-harness runtime 用 Python 3.12
+- MCP設定／lifecycle wrapper用 PowerShell 7 (`pwsh`)
 - Apple Devices とApple USB/device driver層
 - USB/Wi-Fi CoreDevice、RSD、HID、WDA transport用 `pymobiledevice3`
 - OCR fallbackを利用する場合は PaddlePaddle CPU + PaddleOCR
@@ -85,11 +86,11 @@ local development profileの期限切れやrunner再署名が必要になった�
 
 MCP serverは `mcp-server/` にあります。公開sourceにはtransport／認証実装を含めますが、実資格情報や環境固有Tunnel設定は含めません。
 
-ローカル設定と起動にはrepository wrapperを使用します。
+PowerShell 7とrepository wrapperを使用してローカル設定・起動します。
 
 ```powershell
-.\tools\configure_phone_harness_mcp.ps1
-.\tools\start_phone_harness_mcp.ps1
+pwsh -NoProfile -File .\tools\configure_phone_harness_mcp.ps1
+pwsh -NoProfile -File .\tools\start_phone_harness_mcp.ps1
 ```
 
 環境固有値を要求された場合は、自分のローカル設定を使用します。Owner token、control-plane/API key、OAuth credential、Tunnel resource ID、private URLはGit外で管理してください。Secret実値はchecked-in設定ではなく、外部Secret storeまたはprocess-local environmentから渡します。
@@ -97,8 +98,8 @@ MCP serverは `mcp-server/` にあります。公開sourceにはtransport／認�
 全体のlifecycle helperも利用できます。
 
 ```powershell
-.\tools\start_phone_harness.ps1
-.\tools\stop_phone_harness.ps1
+pwsh -NoProfile -File .\tools\start_phone_harness.ps1
+pwsh -NoProfile -File .\tools\stop_phone_harness.ps1
 ```
 
 環境固有のtroubleshooting／recovery記録は公開リポジトリ外に保持します。
@@ -133,8 +134,8 @@ mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/phone-harness"
 phone-harness skill > "${CODEX_HOME:-$HOME/.codex}/skills/phone-harness/SKILL.md"
 ```
 
-phone-harness更新後は登録済みskillも再生成してください。
+update後は登録済みskillを再生成します。
 
-## セットアップ失敗時
+## setup失敗時
 
-`phone-harness --doctor` を使い、上位層を調べる前に最初に失敗しているdependency／permission境界を修正してください。障害logやPC固有の復旧記録は、再利用可能な公開Issue／documentへ十分にsanitizeしない限りローカルで保持します。
+`phone-harness --doctor` を実行し、最初に失敗するdependencyまたはpermission境界から修復してください。failure logや実環境固有のrecovery noteは、再利用可能な形へsanitizeして公開Issue／公開文書へ昇格させる場合を除きローカルに保持します。
