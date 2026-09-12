@@ -49,13 +49,27 @@ function Select-Value {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $defaultPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $defaultPython)) { $defaultPython = $null }
-$defaultTunneldPython = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Intelligence Works\products\phone-harness-windows\.venv-tunneld\Scripts\python.exe'
-if (-not (Test-Path $defaultTunneldPython)) { $defaultTunneldPython = $null }
-$defaultTunnelRoot = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Intelligence Works\tools\openai-tunnel-client'
-$defaultTunnelClient = Join-Path $defaultTunnelRoot 'tunnel-client.exe'
-$defaultTunnelProfile = Join-Path $defaultTunnelRoot 'profiles\phone-harness-mcp.yaml'
-if (-not (Test-Path $defaultTunnelClient)) { $defaultTunnelClient = $null }
-if (-not (Test-Path $defaultTunnelProfile)) { $defaultTunnelProfile = $null }
+
+$defaultTunneldPython = if ($env:PHONE_HARNESS_TUNNELD_PYTHON) {
+    $env:PHONE_HARNESS_TUNNELD_PYTHON
+} else {
+    Join-Path $repoRoot '.venv-tunneld\Scripts\python.exe'
+}
+if (-not (Test-Path $defaultTunneldPython -PathType Leaf)) { $defaultTunneldPython = $null }
+
+$defaultTunnelClient = if ($env:PHONE_HARNESS_TUNNEL_CLIENT_PATH) {
+    $env:PHONE_HARNESS_TUNNEL_CLIENT_PATH
+} else {
+    $null
+}
+if ($defaultTunnelClient -and -not (Test-Path $defaultTunnelClient -PathType Leaf)) { $defaultTunnelClient = $null }
+
+$defaultTunnelProfile = if ($env:PHONE_HARNESS_TUNNEL_PROFILE_PATH) {
+    $env:PHONE_HARNESS_TUNNEL_PROFILE_PATH
+} else {
+    $null
+}
+if ($defaultTunnelProfile -and -not (Test-Path $defaultTunnelProfile -PathType Leaf)) { $defaultTunnelProfile = $null }
 
 $resolvedPublicBaseUrl = Select-Value $PublicBaseUrl $existing.publicBaseUrl 'http://127.0.0.1:17677/' 'MCP public base URL'
 $resolvedOAuthIssuerUrl = Select-Value $OAuthIssuerUrl $existing.oauthIssuerUrl $null 'OAuth issuer URL'
@@ -70,10 +84,12 @@ $resolvedControlPlaneApiKeyEnvName = if ($ControlPlaneApiKeyEnvName) {
     $ControlPlaneApiKeyEnvName
 } elseif ($existing.controlPlaneApiKeyEnvName) {
     [string]$existing.controlPlaneApiKeyEnvName
+} elseif ($env:PHONE_HARNESS_CONTROL_PLANE_API_KEY_ENV_NAME) {
+    [string]$env:PHONE_HARNESS_CONTROL_PLANE_API_KEY_ENV_NAME
 } else {
     'CONTROL_PLANE_API_KEY'
 }
-$resolvedTransport = if ($Transport) { $Transport } elseif ($existing.transport) { [string]$existing.transport } else { 'wifi' }
+$resolvedTransport = if ($Transport) { $Transport } elseif ($existing.transport) { [string]$existing.transport } else { 'auto' }
 
 if ($resolvedPort -lt 1 -or $resolvedPort -gt 65535) { throw 'Port must be between 1 and 65535.' }
 if (-not (Test-Path $resolvedPythonPath -PathType Leaf)) { throw "Python executable not found: $resolvedPythonPath" }
