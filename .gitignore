@@ -15,6 +15,7 @@ desktop-monitor/dist-noedit/
 # Local credentials and signing material
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
