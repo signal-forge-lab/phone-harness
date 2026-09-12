@@ -18,6 +18,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw 'phone-harness MCP configuration requires PowerShell 7 or later. Run this script with pwsh.'
+}
 if (-not $IsWindows) {
     throw 'phone-harness MCP configuration is currently supported on Windows only.'
 }
